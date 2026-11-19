@@ -153,6 +153,8 @@ GEMINI_API_KEY="your-key" ~/.local/bin/gemini-voice-daemon
      - `Escape`: Cancel and clear
    - In **`direct`** mode (`ShowActionMenu = False`), the raw transcript is committed immediately.
 
+While recording is active, the IME captures **all** keystrokes; they are not forwarded to the focused application. This is deliberate: it keeps dictation clean and prevents stray typing from leaking into the app receiving the transcript. Press the trigger key (`Alt+space`) or `Return` (or pause for `vad_silence_ms`) to end recording and resume normal typing; `Escape` cancels it.
+
 ## Daemon Configuration (`~/.config/gemini-voice/config.toml`)
 
 Prompts, live transcription model (defaults to `gemini-3.5-transcribe-live`), `mode` (`VERBATIM` or `SMART`), optional `custom_vocabulary`, default `post_process.model`, optional `[post_process.models]` per-action overrides, proxy (`http://`, `https://`, `socks5://`), language (defaults to `auto`, or comma-separated BCP-47 hints such as `cmn-Hans-CN,en-US`; `zh-CN` aliases to `cmn-Hans-CN`), VAD silence timeout (`vad_silence_ms`), and `prefetch` actions live in `~/.config/gemini-voice/config.toml` and hot-reload automatically when saved.
