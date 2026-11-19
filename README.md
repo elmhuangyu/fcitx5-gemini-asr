@@ -25,11 +25,8 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 # Build and run all Go and C++ tests without installing:
 ./install.sh --build-only
 
-# Install user-local addon (~/.local) + daemon/CLI (~/.local/bin) without sudo (default):
+# Install user-local addon (~/.local) + daemon/CLI (~/.local/bin) without sudo:
 ./install.sh
-
-# Or install system-wide addon (/usr/lib/fcitx5) + user daemon/CLI (~/.local/bin):
-./install.sh --system
 ```
 
 You can also use `just`:
@@ -37,7 +34,6 @@ You can also use `just`:
 ```bash
 just check           # fmt-check + lint + build + test
 just install         # ./install.sh (user-local ~/.local)
-just install-system  # ./install.sh --system
 ```
 
 ## CLI Setup, Models & Credential Management (`gemini-voice`)

@@ -6,24 +6,18 @@ MODE="user"
 
 usage() {
     cat <<'EOF'
-Usage: ./install.sh [--user | --system | --build-only]
+Usage: ./install.sh [--user | --build-only]
 
 Modes:
   --user        Install Fcitx5 addon into ~/.local (default, no sudo), install Go
                 daemon/CLI to ~/.local/bin, and set up systemd user files.
-  --system      Install Fcitx5 addon into /usr (uses sudo if needed), install Go
-                daemon/CLI to ~/.local/bin, and set up systemd user files.
   --build-only  Compile C++ addon & Go daemon/CLI and run all test suites without
-                modifying /usr or ~/.local / ~/.config.
+                modifying ~/.local or ~/.config.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --system)
-            MODE="system"
-            shift
-            ;;
         --user)
             MODE="user"
             shift
@@ -62,11 +56,7 @@ echo "==> [1/4] Building & testing Go daemon and CLI..."
     ln -sfn gemini-voice-daemon "${ROOT_DIR}/daemon/gemini-voice"
 )
 
-if [[ "${MODE}" == "user" ]]; then
-    CMAKE_PREFIX="$HOME/.local"
-else
-    CMAKE_PREFIX="/usr"
-fi
+CMAKE_PREFIX="$HOME/.local"
 
 echo "==> [2/4] Building & testing Fcitx5 C++ addon (prefix: ${CMAKE_PREFIX})..."
 cmake -S "${ROOT_DIR}/addon" -B "${ROOT_DIR}/addon/build" \
@@ -82,11 +72,7 @@ if [[ "${MODE}" == "build-only" ]]; then
 fi
 
 echo "==> [3/4] Installing Fcitx5 addon (${MODE})..."
-if [[ "${MODE}" == "system" && "$(id -u)" -ne 0 ]]; then
-    sudo cmake --install "${ROOT_DIR}/addon/build"
-else
-    cmake --install "${ROOT_DIR}/addon/build"
-fi
+cmake --install "${ROOT_DIR}/addon/build"
 
 echo "==> [4/4] Installing Go daemon/CLI, config, and systemd user service..."
 mkdir -p "$HOME/.local/bin" "$HOME/.config/gemini-voice" "$HOME/.config/systemd/user"
@@ -118,13 +104,8 @@ Installation complete! Next steps:
    systemctl --user enable --now gemini-voice.service
 
 3. Restart Fcitx5 and add "Gemini Voice" in fcitx5-configtool.
-EOF
 
-if [[ "${MODE}" == "user" ]]; then
-    cat <<'EOF'
-
-Note (--user mode): ensure Fcitx5 discovers ~/.local addons and data dirs, e.g.:
+Note: ensure Fcitx5 discovers ~/.local addons and data dirs, e.g.:
    FCITX_ADDON_DIRS="$HOME/.local/lib/fcitx5:/usr/lib/fcitx5"
    XDG_DATA_DIRS="$HOME/.local/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 EOF
-fi
