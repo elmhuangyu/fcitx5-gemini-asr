@@ -150,6 +150,75 @@ func TestCLI_ConfigSetGetShow(t *testing.T) {
 	}
 }
 
+func TestWriteConfigUpdatesReportsSplitState(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("read-only directories do not block writes for root")
+	}
+
+	fcitxDir := t.TempDir()
+	fcitxPath := filepath.Join(fcitxDir, "gemini-voice.conf")
+
+	daemonDir := t.TempDir()
+	daemonPath := filepath.Join(daemonDir, "config.toml")
+	if err := os.Chmod(daemonDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(daemonDir, 0o700) })
+
+	err := writeConfigUpdates(fcitxPath, []byte("ShowActionMenu=False\n"), daemonPath, []byte("live = {}\n"))
+	if err == nil {
+		t.Fatal("expected daemon save failure after successful fcitx save")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, daemonPath) {
+		t.Fatalf("error should name the failed daemon config path: %q", msg)
+	}
+	if !strings.Contains(msg, fcitxPath) {
+		t.Fatalf("error should mention the updated fcitx config path: %q", msg)
+	}
+	if !strings.Contains(msg, "re-run") {
+		t.Fatalf("error should explain how to reconcile the split state: %q", msg)
+	}
+	if _, statErr := os.Stat(fcitxPath); statErr != nil {
+		t.Fatalf("fcitx config should have been written before the failure: %v", statErr)
+	}
+	if _, statErr := os.Stat(daemonPath); statErr == nil {
+		t.Fatal("daemon config should not have been written")
+	}
+}
+
+func TestWriteConfigUpdatesSavesBoth(t *testing.T) {
+	dir := t.TempDir()
+	fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+	daemonPath := filepath.Join(dir, "gemini-voice", "config.toml")
+
+	if err := writeConfigUpdates(fcitxPath, []byte("ShowActionMenu=False\n"), daemonPath, []byte("live = {}\n")); err != nil {
+		t.Fatalf("writeConfigUpdates: %v", err)
+	}
+	if data, err := os.ReadFile(fcitxPath); err != nil || !strings.Contains(string(data), "ShowActionMenu=False") {
+		t.Fatalf("unexpected fcitx config content: %q err=%v", data, err)
+	}
+	if data, err := os.ReadFile(daemonPath); err != nil || !strings.Contains(string(data), "live") {
+		t.Fatalf("unexpected daemon config content: %q err=%v", data, err)
+	}
+
+	// Nil sides are skipped without touching the other file.
+	before, err := os.ReadFile(fcitxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeConfigUpdates(fcitxPath, nil, daemonPath, nil); err != nil {
+		t.Fatalf("no-op writeConfigUpdates: %v", err)
+	}
+	after, err := os.ReadFile(fcitxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Fatal("expected fcitx config untouched when both sides are nil")
+	}
+}
+
 func TestCLI_ModelsCommandAndRemote(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

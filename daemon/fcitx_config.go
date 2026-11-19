@@ -134,14 +134,8 @@ func LoadFcitxAddonConfig(path string) (FcitxAddonConfig, error) {
 	return cfg, nil
 }
 
-// SaveFcitxAddonConfig writes Fcitx5's gemini-voice.conf INI file atomically.
-func SaveFcitxAddonConfig(path string, cfg FcitxAddonConfig) error {
-	cleanPath := filepath.Clean(path)
-	dir := filepath.Dir(cleanPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create fcitx config directory %q: %w", dir, err)
-	}
-
+// renderFcitxAddonConfig formats cfg as the gemini-voice.conf INI content.
+func renderFcitxAddonConfig(cfg FcitxAddonConfig) []byte {
 	showMenu := "False"
 	if cfg.ShowActionMenu {
 		showMenu = "True"
@@ -174,8 +168,12 @@ func SaveFcitxAddonConfig(path string, cfg FcitxAddonConfig) error {
 		}
 		fmt.Fprintf(&b, "%d=%s\n", i, quoteFcitxValue(trimmed))
 	}
+	return []byte(b.String())
+}
 
-	return writeFileAtomic(cleanPath, []byte(b.String()), 0o600)
+// SaveFcitxAddonConfig writes Fcitx5's gemini-voice.conf INI file atomically.
+func SaveFcitxAddonConfig(path string, cfg FcitxAddonConfig) error {
+	return writeConfigFileAtomic(path, renderFcitxAddonConfig(cfg), "fcitx config")
 }
 
 // ReloadFcitx5Config triggers a best-effort config reload in a running fcitx5 instance.

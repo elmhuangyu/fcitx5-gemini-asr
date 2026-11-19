@@ -299,18 +299,28 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 		return 1
 	}
 
+	// Render both configs before writing either file: with validation and
+	// encoding done up front, only an I/O failure can leave the two files out
+	// of sync, and writeConfigUpdates reports that split state clearly.
+	var daemonData, fcitxData []byte
 	if daemonDirty {
-		if err := SaveConfigFile(*configPath, cfg); err != nil {
-			_, _ = fmt.Fprintf(deps.stderr, "error: save %q: %v\n", *configPath, err)
+		if daemonData, err = renderConfigTOML(cfg); err != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "error: encode daemon config %q: %v\n", *configPath, err)
 			return 1
 		}
+	}
+	if fcitxDirty {
+		fcitxData = renderFcitxAddonConfig(fcitxCfg)
+	}
+	if err := writeConfigUpdates(*fcitxPath, fcitxData, *configPath, daemonData); err != nil {
+		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
+		return 1
+	}
+
+	if daemonDirty {
 		_, _ = fmt.Fprintf(deps.stdout, "Updated %s in %s\n", key, *configPath)
 	}
 	if fcitxDirty {
-		if err := SaveFcitxAddonConfig(*fcitxPath, fcitxCfg); err != nil {
-			_, _ = fmt.Fprintf(deps.stderr, "error: save %q: %v\n", *fcitxPath, err)
-			return 1
-		}
 		reloaded := ReloadFcitx5Config(context.Background(), deps)
 		if reloaded {
 			_, _ = fmt.Fprintf(deps.stdout, "Updated %s in %s (reloaded Fcitx5)\n", key, *fcitxPath)
@@ -319,6 +329,31 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 		}
 	}
 	return 0
+}
+
+// writeConfigUpdates persists pre-rendered config contents, writing the
+// Fcitx5 addon config first and the daemon config second. A nil data slice
+// means that file does not need updating. Saving the Fcitx5 config first puts
+// the riskier write (its directory is owned by Fcitx5 tooling, while the
+// daemon config directory is created by this CLI) before anything has been
+// modified, so its failure leaves both files untouched. If the daemon write
+// still fails after the Fcitx5 write succeeded, the returned error spells out
+// the split state and how to reconcile it.
+func writeConfigUpdates(fcitxPath string, fcitxData []byte, configPath string, daemonData []byte) error {
+	if fcitxData != nil {
+		if err := writeConfigFileAtomic(fcitxPath, fcitxData, "fcitx config"); err != nil {
+			return fmt.Errorf("save %q: %w", fcitxPath, err)
+		}
+	}
+	if daemonData != nil {
+		if err := writeConfigFileAtomic(configPath, daemonData, "config"); err != nil {
+			if fcitxData != nil {
+				return fmt.Errorf("updated %q but failed to save daemon config %q: %v; the two config files are now out of sync, re-run the same command to reconcile them", fcitxPath, configPath, err)
+			}
+			return fmt.Errorf("save %q: %w", configPath, err)
+		}
+	}
+	return nil
 }
 
 func parseActionKey(k string, prefixes ...string) (string, bool) {

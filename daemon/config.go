@@ -219,14 +219,8 @@ func (c Config) EffectiveActionNames() []string {
 	return append(out, extra...)
 }
 
-// SaveConfigFile atomically writes cfg as TOML with mode 0600.
-func SaveConfigFile(path string, cfg Config) error {
-	cleanPath := filepath.Clean(path)
-	dir := filepath.Dir(cleanPath)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create config directory %q: %w", dir, err)
-	}
-
+// renderConfigTOML normalizes cfg and encodes it as TOML without writing anything.
+func renderConfigTOML(cfg Config) ([]byte, error) {
 	toWrite := cfg.Clone()
 	toWrite.LiveTranscribe.CustomVocabulary = pruneCustomVocabulary(toWrite.LiveTranscribe.CustomVocabulary)
 	if toWrite.PostProcess.Prefetch == nil {
@@ -249,9 +243,29 @@ func SaveConfigFile(path string, cfg Config) error {
 	var buf bytes.Buffer
 	enc := toml.NewEncoder(&buf)
 	if err := enc.Encode(toWrite); err != nil {
-		return fmt.Errorf("encode config TOML: %w", err)
+		return nil, fmt.Errorf("encode config TOML: %w", err)
 	}
-	return writeFileAtomic(cleanPath, buf.Bytes(), 0o600)
+	return buf.Bytes(), nil
+}
+
+// writeConfigFileAtomic creates path's parent directory if needed and writes
+// data atomically with mode 0600; kind names the file in error messages.
+func writeConfigFileAtomic(path string, data []byte, kind string) error {
+	cleanPath := filepath.Clean(path)
+	dir := filepath.Dir(cleanPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s directory %q: %w", kind, dir, err)
+	}
+	return writeFileAtomic(cleanPath, data, 0o600)
+}
+
+// SaveConfigFile atomically writes cfg as TOML with mode 0600.
+func SaveConfigFile(path string, cfg Config) error {
+	data, err := renderConfigTOML(cfg)
+	if err != nil {
+		return err
+	}
+	return writeConfigFileAtomic(path, data, "config")
 }
 
 func LoadConfigFile(path string) (Config, error) {
