@@ -168,7 +168,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 
 			huh.NewConfirm().
 				Title("Configure per-action model overrides?").
-				Description("Use ←/→ to toggle; choose Yes to set custom models for individual menu actions.").
+				Description("Use ←/→ to toggle; choose Yes to set custom models, or No to inherit the default model for all actions.").
 				Affirmative("Yes").
 				Negative("No").
 				Value(&state.configureOverrides),
@@ -324,6 +324,8 @@ func applySetupFormState(cfg *Config, fcitxCfg *FcitxAddonConfig, state *setupFo
 				setActionModelOverride(cfg, action, state.actionOverrides[i])
 			}
 		}
+	} else {
+		cfg.PostProcess.Models = nil
 	}
 	if state.showActionMenu {
 		if len(state.prefetch) == 0 {

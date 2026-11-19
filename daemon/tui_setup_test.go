@@ -276,3 +276,87 @@ func TestBuildSetupForm_ConditionalHiddenGroupsAndAbort(t *testing.T) {
 		}
 	})
 }
+
+func TestApplySetupFormState_DisableOverridesClearsStaleModels(t *testing.T) {
+	newInitialConfigs := func() (Config, FcitxAddonConfig) {
+		cfg := DefaultConfig()
+		cfg.PostProcess.Models = map[string]string{
+			"refine_formal": "gemini-2.5-pro",
+			"as_prompt":     "gemini-2.5-pro",
+		}
+		return cfg, DefaultFcitxAddonConfig()
+	}
+
+	assertCleared := func(t *testing.T, cfg Config) {
+		t.Helper()
+		if cfg.PostProcess.Models != nil {
+			t.Fatalf("expected PostProcess.Models cleared, got %#v", cfg.PostProcess.Models)
+		}
+		for _, action := range []string{"refine_formal", "as_prompt"} {
+			if got := cfg.ModelForAction(action); got != cfg.PostProcess.Model {
+				t.Fatalf("ModelForAction(%q) = %q, want %q", action, got, cfg.PostProcess.Model)
+			}
+		}
+	}
+
+	t.Run("direct_state_toggle", func(t *testing.T) {
+		cfg, fcitxCfg := newInitialConfigs()
+		state := newSetupFormState(cfg, fcitxCfg, setupFormOptions{})
+		if !state.configureOverrides {
+			t.Fatal("expected initial configureOverrides=true when PostProcess.Models is non-empty")
+		}
+		state.configureOverrides = false
+
+		if err := applySetupFormState(&cfg, &fcitxCfg, state); err != nil {
+			t.Fatalf("applySetupFormState: %v", err)
+		}
+		assertCleared(t, cfg)
+	})
+
+	t.Run("interactive_form_toggle", func(t *testing.T) {
+		cfg, fcitxCfg := newInitialConfigs()
+		opts := setupFormOptions{IncludeAPIKey: false}
+		state := newSetupFormState(cfg, fcitxCfg, opts)
+		if !state.configureOverrides {
+			t.Fatal("expected initial configureOverrides=true when PostProcess.Models is non-empty")
+		}
+		form := initTestForm(buildSetupForm(state, opts))
+
+		// Group 1: keep all defaults (4 fields).
+		for i := 0; i < 4; i++ {
+			form = pressSpecial(form, tea.KeyEnter)
+		}
+
+		// Group 2: keep liveModel and postProcessModel, then toggle Confirm overrides from Yes to No via Right.
+		form = pressSpecial(form, tea.KeyEnter)
+		form = pressSpecial(form, tea.KeyEnter)
+		normalizedView := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(form.View()), "┃", " ")), " ")
+		if !strings.Contains(normalizedView, "No to inherit the default model for all actions.") {
+			t.Fatalf("expected updated Confirm description in view:\n%s", ansi.Strip(form.View()))
+		}
+		form = pressSpecial(form, tea.KeyRight)
+		form = pressSpecial(form, tea.KeyEnter)
+
+		// Group 3 (Per-Action Model Overrides) must be skipped, landing directly on Group 4 (Prefetch).
+		if !strings.Contains(ansi.Strip(form.View()), "Prefetch actions") {
+			t.Fatalf("expected Group 3 skipped to Group 4 Prefetch actions, got:\n%s", ansi.Strip(form.View()))
+		}
+		form = pressSpecial(form, tea.KeyEnter)
+
+		// Group 5: keep customVocabulary, triggerKeys, proxy (3 fields).
+		for i := 0; i < 3; i++ {
+			form = pressSpecial(form, tea.KeyEnter)
+		}
+
+		if form.State != huh.StateCompleted {
+			t.Fatalf("form.State = %v, want StateCompleted (%v)\nview:\n%s", form.State, huh.StateCompleted, ansi.Strip(form.View()))
+		}
+		if state.configureOverrides {
+			t.Fatal("expected state.configureOverrides=false after toggling Confirm to No")
+		}
+		if err := applySetupFormState(&cfg, &fcitxCfg, state); err != nil {
+			t.Fatalf("applySetupFormState: %v", err)
+		}
+		assertCleared(t, cfg)
+	})
+}
