@@ -2,17 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODE="system"
+MODE="user"
 
 usage() {
     cat <<'EOF'
-Usage: ./install.sh [--system | --user | --build-only]
+Usage: ./install.sh [--user | --system | --build-only]
 
 Modes:
-  --system      Install Fcitx5 addon into /usr (default, uses sudo if needed),
-                install Go daemon/CLI to ~/.local/bin, and set up systemd user files.
-  --user        Install Fcitx5 addon into ~/.local (no sudo), install Go daemon/CLI
-                to ~/.local/bin, and set up systemd user files.
+  --user        Install Fcitx5 addon into ~/.local (default, no sudo), install Go
+                daemon/CLI to ~/.local/bin, and set up systemd user files.
+  --system      Install Fcitx5 addon into /usr (uses sudo if needed), install Go
+                daemon/CLI to ~/.local/bin, and set up systemd user files.
   --build-only  Compile C++ addon & Go daemon/CLI and run all test suites without
                 modifying /usr or ~/.local / ~/.config.
 EOF

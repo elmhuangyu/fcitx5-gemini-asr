@@ -66,8 +66,12 @@ test: test-daemon test-addon
 # Run full verification suite (format check, lint, build, and tests)
 check: fmt-check lint build test
 
-# Install system-wide Fcitx5 addon (/usr) and user daemon/service
+# Install user-local Fcitx5 addon (~/.local) and user daemon/service
 install:
+    ./install.sh
+
+# Install system-wide Fcitx5 addon (/usr) and user daemon/service
+install-system:
     ./install.sh --system
 
 # Install user-local Fcitx5 addon (~/.local) and user daemon/service
