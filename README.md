@@ -17,7 +17,7 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 - **Go** (>= 1.27.4, matching `daemon/go.mod`)
 - **PipeWire** (`pw-record`)
 - **systemd** (`systemd-creds` with TPM2; falls back to `GEMINI_API_KEY` env var when `CREDENTIALS_DIRECTORY` is unset)
-- Optional dev tooling: `just`, `golangci-lint`, `goimports`, `clang-format`
+- Optional build & dev tooling: `gettext` (`msgfmt`, for compiling UI translations in `addon/`), `just`, `golangci-lint`, `goimports`, `clang-format`
 
 ## Build & Install
 
@@ -173,3 +173,7 @@ Common recipes defined in `Justfile`:
 - **Daemon connection error**: Run `gemini-voice status` or `systemctl --user status gemini-voice.service` and confirm `$XDG_RUNTIME_DIR/gemini-ime.sock` exists (`0600`).
 - **Credential decryption failure**: Run `gemini-voice auth verify`; if `CREDENTIALS_DIRECTORY` is set by systemd, the encrypted credential file must exist and match the active TPM2/host scope.
 - **No audio captured**: Verify `pw-record --raw --rate=16000 --channels=1 --format=s16 - > /dev/null` works with your PipeWire microphone source.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE) for details.
