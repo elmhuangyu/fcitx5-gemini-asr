@@ -10,6 +10,10 @@ env:
   GO_VERSION: 1.27.4
   GOIMPORTS_VERSION: v0.49.0
   GOLANGCI_LINT_VERSION: v2.15.0
+  # ubuntu-latest (26.04) ships fcitx5 5.1.19, which predates
+  # InputPanel::overlayMessage (5.1.22) used by the integration test.
+  # Build a newer fcitx5 from source as an embedded library instead.
+  FCITX5_VERSION: 5.1.23
 
 jobs:
   daemon:
@@ -63,9 +67,33 @@ jobs:
             pkg-config \
             clang-format \
             gettext \
-            libfcitx5core-dev \
-            libfcitx5config-dev \
-            libfcitx5utils-dev
+            extra-cmake-modules \
+            libuv1-dev \
+            uuid-dev \
+            git \
+            make
+
+      - name: Build and install fcitx5 core
+        run: |
+          git clone --depth 1 --branch "$FCITX5_VERSION" https://github.com/fcitx/fcitx5.git /tmp/fcitx5
+          cmake -S /tmp/fcitx5 -B /tmp/fcitx5/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DENABLE_KEYBOARD=Off \
+            -DENABLE_X11=Off \
+            -DENABLE_WAYLAND=Off \
+            -DENABLE_ENCHANT=Off \
+            -DENABLE_DBUS=Off \
+            -DENABLE_SERVER=Off \
+            -DENABLE_EMOJI=Off \
+            -DUSE_SYSTEMD=Off \
+            -DBUILD_SPELL_DICT=Off \
+            -DENABLE_TEST=Off \
+            -DENABLE_TESTING_ADDONS=Off
+          cmake --build /tmp/fcitx5/build -j"$(nproc)"
+          sudo cmake --install /tmp/fcitx5/build
+          sudo ldconfig
+          pkg-config --modversion Fcitx5Core
 
       - name: Shell syntax check
         run: bash -n install.sh
