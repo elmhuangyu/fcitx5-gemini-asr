@@ -650,6 +650,32 @@ void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
             }
             clearSession(ic);
         }
+        return;
+    }
+
+    if (ev == "state_changed") {
+        auto it = msg.find("state");
+        if (it == msg.end() || it->second != "idle") {
+            // "recording"/"processing" are echoes of commands this engine
+            // itself sent; nothing to do.
+            return;
+        }
+        if (state_ != State::RECORDING && state_ != State::STOPPING &&
+            state_ != State::PROCESSING) {
+            // Idle echoes a transition the engine already handled itself
+            // (its own cancel, the error path, or a delivered result), so
+            // acting here would double-reset the normal flow.
+            return;
+        }
+        // Daemon reports idle while a session is still in flight and no
+        // partial/final result arrived: unexpected daemon-side reset
+        // (e.g. daemon restart or cancelled session). Recover to idle
+        // with feedback.
+        clearSession(ic);
+        if (ic) {
+            instance_->showCustomInputMethodInformation(
+                ic, _("Voice session ended unexpectedly"));
+        }
     }
 }
 

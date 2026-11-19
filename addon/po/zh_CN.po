@@ -91,6 +91,10 @@ msgstr "未知错误"
 msgid "AI processing failed: "
 msgstr "AI 处理失败: "
 
-#: addon/engine.cpp:662 addon/engine.cpp:668
+#: addon/engine.cpp:688 addon/engine.cpp:694
 msgid "Disconnected from Gemini Voice Daemon"
 msgstr "与 Gemini Voice Daemon 断开连接"
+
+#: addon/engine.cpp:676
+msgid "Voice session ended unexpectedly"
+msgstr "语音会话已意外结束"

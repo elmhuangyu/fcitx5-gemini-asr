@@ -520,6 +520,86 @@ int main() {
                           [&]() { REQUIRE(ic->inputPanel().empty()); });
             }
 
+            // 6b. Daemon `state_changed`: echoes of engine-initiated
+            // transitions are ignored; an unexpected daemon-side reset
+            // (idle with no result) recovers to idle with feedback.
+            runOnMain(instance, [&]() {
+                ic->setCapabilityFlags(fcitx::CapabilityFlag::Preedit);
+                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+            });
+            {
+                auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                    daemon.waitForCommand(cmdIdx++));
+                REQUIRE(cmd && (*cmd)["cmd"] == "start_recording");
+            }
+            // Echo of the engine-initiated start must not reset anything:
+            // the engine is still RECORDING and accepts partial_text.
+            daemon.sendEvent(
+                R"({"event":"state_changed","state":"recording"})");
+            daemon.sendEvent(R"({"event":"partial_text","text":"仍在录音中"})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                return ic->inputPanel().clientPreedit().toString() ==
+                       "仍在录音中";
+            }));
+
+            // Unexpected daemon-side reset: idle arrives with no result
+            // while RECORDING -> back to idle, panel cleared, status shown,
+            // nothing committed.
+            daemon.sendEvent(R"({"event":"state_changed","state":"idle"})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                return !ic->inputPanel().candidateList() &&
+                       ic->inputPanel().clientPreedit().empty() &&
+                       ic->inputPanel().preedit().empty() &&
+                       ic->inputPanel().overlayMessage().toString() ==
+                           "Voice session ended unexpectedly";
+            }));
+            runOnMain(instance, [&]() { REQUIRE(ic->committed.size() == 3); });
+
+            // A subsequent session works normally.
+            runOnMain(instance, [&]() {
+                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+            });
+            {
+                auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                    daemon.waitForCommand(cmdIdx++));
+                REQUIRE(cmd && (*cmd)["cmd"] == "start_recording");
+                runOnMain(instance, [&]() {
+                    REQUIRE(ic->inputPanel().clientPreedit().toString() ==
+                            "[Recording...]");
+                });
+            }
+            runOnMain(instance, [&]() {
+                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Escape));
+            });
+            {
+                auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                    daemon.waitForCommand(cmdIdx++));
+                REQUIRE(cmd && (*cmd)["cmd"] == "cancel");
+            }
+            // The real daemon emits idle after handling our own cancel;
+            // that echo must be ignored (engine already idle, no feedback,
+            // panel stays clear).
+            daemon.sendEvent(R"({"event":"state_changed","state":"idle"})");
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            runOnMain(instance, [&]() { REQUIRE(ic->inputPanel().empty()); });
+
+            // Same recovery while STOPPING: idle before any
+            // transcribe_done clears the finalizing state.
+            runOnMain(instance, [&]() {
+                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            runOnMain(instance, [&]() {
+                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Return));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            daemon.sendEvent(R"({"event":"state_changed","state":"idle"})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                return ic->inputPanel().clientPreedit().empty() &&
+                       ic->inputPanel().preedit().empty() &&
+                       !ic->inputPanel().candidateList();
+            }));
+
             // 7. ShowActionMenu=false commits raw_text directly
             runOnMain(instance, [&]() {
                 fcitx::RawConfig rawCfg;
