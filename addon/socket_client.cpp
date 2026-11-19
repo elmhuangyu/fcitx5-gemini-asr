@@ -69,6 +69,7 @@ void SocketClient::stop() {
 
 void SocketClient::setSocketPath(std::string path) {
     bool changed = false;
+    bool notifyDisconnect = false;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (socketPath_ != path) {
@@ -77,12 +78,19 @@ void SocketClient::setSocketPath(std::string path) {
             if (fd_ >= 0) {
                 retireFdLocked(fd_);
                 fd_ = -1;
+                notifyDisconnect = !stopRequested_;
             }
             changed = true;
         }
     }
     if (changed) {
         wakeReader();
+    }
+    // A live connection was retired because the socket path changed; notify
+    // through the same callback the reader loop uses on EOF/error so owners
+    // observe the loss instead of staying stuck on the dead session.
+    if (notifyDisconnect && onDisconnect_) {
+        onDisconnect_();
     }
 }
 
