@@ -7,14 +7,14 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 ## Architecture
 
 - **Frontend (`addon/`)**: C++20 `fcitx::InputMethodEngineV2` plugin (`libgemini-voice.so`) communicating asynchronously over a Unix Domain Socket (`$XDG_RUNTIME_DIR/gemini-ime.sock`) using NDJSON and dispatching all UI updates to the Fcitx5 main loop via `EventDispatcher`.
-- **Backend & CLI (`daemon/`)**: Single Go binary (`gemini-voice-daemon` with CLI alias `gemini-voice`) that captures 16 kHz mono s16le PCM via PipeWire (`pw-record --raw`), streams audio over the Gemini Live API (`BidiGenerateContent`, defaulting to `gemini-3.5-transcribe-live` and configurable via `live_transcribe.model` / `gemini-voice models --live`), detects silence via RMS VAD, concurrently prefetches post-processing actions via `generateContent` (with per-action model overrides), hot-reloads `config.toml` via `fsnotify`, and manages interactive setup, model routing, and TPM2 credentials.
+- **Backend & CLI (`daemon/`)**: Single Go binary (`gemini-voice-daemon` with CLI alias `gemini-voice`) that captures 16 kHz mono s16le PCM via PipeWire (`pw-record --raw`), streams audio over the Gemini Live API (`BidiGenerateContent`, defaulting to `gemini-3.5-transcribe-live` and configurable via `live_transcribe.model` / `gemini-voice models --live`), detects silence via RMS VAD, concurrently prefetches post-processing actions via `generateContent` (with per-action model overrides), hot-reloads `config.toml` via `fsnotify`, and provides an interactive TUI setup form, model routing, and TPM2 credential management.
 - **Systemd & Config (`systemd/`)**: User service unit (`LoadCredentialEncrypted` with TPM2) and TOML configuration template.
 
 ## Prerequisites
 
 - **Fcitx5** development headers and CMake packages (`Fcitx5Core`, `Fcitx5Config`, `Fcitx5Utils`)
 - **C++20** compiler (`g++` or `clang++`), `cmake`, `pkg-config`
-- **Go** (>= 1.22)
+- **Go** (>= 1.27.4, matching `daemon/go.mod`)
 - **PipeWire** (`pw-record`)
 - **systemd** (`systemd-creds` with TPM2; falls back to `GEMINI_API_KEY` env var when `CREDENTIALS_DIRECTORY` is unset)
 - Optional dev tooling: `just`, `golangci-lint`, `goimports`, `clang-format`
@@ -44,18 +44,34 @@ just install-user  # ./install.sh --user
 
 The installer places `gemini-voice-daemon` and its CLI symlink `gemini-voice` in `~/.local/bin/`.
 
-### Interactive Setup Wizard
+### Interactive TUI Setup (`init` / `configure`)
 
-Both `gemini-voice init` and `gemini-voice configure` launch an interactive TUI form with arrow-key navigation (`↑/↓`, `←/→` cursor editing), `Space` multi-select prefetch toggles, inline validation, and hidden/masked API key input (`Ctrl+C` cancels without modifying files):
+Both `gemini-voice init` and `gemini-voice configure` launch an interactive multi-step TUI form (`charm.land/huh/v2`):
+
+- **Form steps**:
+  1. **Input & Recognition**: action menu vs. direct commit, transcription language (`auto` or comma-separated BCP-47 tags), `VERBATIM`/`SMART` mode, and VAD silence timeout
+  2. **Models**: live transcription model, default post-processing model, and whether to configure per-action overrides
+  3. **Per-Action Model Overrides** *(shown when enabled)*: model overrides for `refine_fix_typos`, `refine_casual`, `refine_formal`, `translate_en`, and `as_prompt`
+  4. **Action Menu Prefetch** *(shown in `menu` mode)*: multi-select actions to prefetch when recording stops
+  5. **Vocabulary, Hotkey & Network**: custom vocabulary (`custom_vocabulary`), Fcitx5 trigger key(s), and HTTP/SOCKS5 proxy
+  6. **Gemini API Key** *(`init` only)*: masked password input (`systemd-creds` encryption); if a `.cred` file already exists, prompts whether to keep or overwrite it
+- **TUI keybindings**: `↑`/`↓` (`Shift+Tab`/`Tab`/`Enter`) move between options and fields, `←`/`→` edit text cursors or toggle Yes/No confirmations, `Space`/`x` toggle multi-select checkboxes, `Ctrl+E` accepts autocomplete suggestions, and `Ctrl+C` cancels without saving any changes.
 
 ```bash
-# Full guided TUI setup (input mode, language, live mode, vocabulary, VAD, models, hotkey, proxy, and TPM2 API key):
+# Full interactive TUI setup (config, Fcitx5 addon settings, and encrypted TPM2 API key):
 gemini-voice init
 
 # Initialize and immediately enable/start the systemd user service:
 gemini-voice init --enable-service
 
-# Re-run configuration TUI form later without touching encrypted credentials:
+# Fall back to host/auto key encryption if TPM2 is unavailable:
+gemini-voice init --with-key auto
+
+# Scripted / non-interactive initialization (skips TUI, writes default config.toml if missing):
+printf '%s' "$MY_KEY" | gemini-voice init --stdin --non-interactive
+gemini-voice init --key-file /path/to/key.txt
+
+# Re-run the interactive TUI form later without touching encrypted credentials (requires a TTY; use `config set` in scripts):
 gemini-voice configure
 ```
 
