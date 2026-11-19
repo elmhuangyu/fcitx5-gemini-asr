@@ -952,3 +952,277 @@ func TestGeminiLiveClient_GeneralLiveModelFallback(t *testing.T) {
 		}
 	}
 }
+
+func TestGeminiLiveClient_ErrorSanitization(t *testing.T) {
+	const secret = "super-secret-live-api-key"
+
+	t.Run("setup_phase_error", func(t *testing.T) {
+		upgrader := websocket.Upgrader{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+
+			_, _, _ = conn.ReadMessage()
+			_ = conn.WriteJSON(map[string]any{
+				"error": map[string]any{
+					"code":    400,
+					"status":  "INVALID_ARGUMENT",
+					"message": "setup failed for wss://example.com/ws?key=leaked-query-secret with key " + secret,
+				},
+			})
+		}))
+		defer srv.Close()
+
+		client := NewGeminiLiveClient()
+		audio := newSliceAudioSource(nil, true)
+		stopCh := make(chan struct{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_, err := client.Run(ctx, audio, stopCh, LiveSessionOptions{
+			APIKey:    secret,
+			LiveWSURL: "ws" + strings.TrimPrefix(srv.URL, "http"),
+			Model:     "gemini-3.5-transcribe-live",
+		}, nil)
+		if err == nil {
+			t.Fatal("expected error for setup-phase JSON error")
+		}
+		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "leaked-query-secret") {
+			t.Fatalf("setup error leaked secret: %v", err)
+		}
+		if !strings.Contains(err.Error(), "REDACTED") {
+			t.Fatalf("expected REDACTED in sanitized setup error, got %v", err)
+		}
+	})
+
+	t.Run("mid_stream_error", func(t *testing.T) {
+		upgrader := websocket.Upgrader{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+
+			_, _, _ = conn.ReadMessage()
+			_ = conn.WriteJSON(map[string]any{"setupComplete": map[string]any{}})
+
+			for {
+				_, payload, err := conn.ReadMessage()
+				if err != nil {
+					return
+				}
+				var msg map[string]any
+				if err := json.Unmarshal(payload, &msg); err != nil {
+					continue
+				}
+				if ri, ok := msg["realtimeInput"].(map[string]any); ok {
+					if _, hasAudio := ri["audio"]; hasAudio {
+						_ = conn.WriteJSON(map[string]any{
+							"error": map[string]any{
+								"code":    500,
+								"status":  "INTERNAL",
+								"message": "stream failed at wss://example.com/ws?key=leaked-query-secret using " + secret,
+							},
+						})
+						return
+					}
+				}
+			}
+		}))
+		defer srv.Close()
+
+		client := NewGeminiLiveClient()
+		client.FinalizeTimeout = 2 * time.Second
+		audio := newSliceAudioSource([][]byte{makePCMChunk(800, ChunkBytes)}, true)
+		stopCh := make(chan struct{})
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		_, err := client.Run(ctx, audio, stopCh, LiveSessionOptions{
+			APIKey:    secret,
+			LiveWSURL: "ws" + strings.TrimPrefix(srv.URL, "http"),
+			Model:     "gemini-3.5-transcribe-live",
+		}, nil)
+		if err == nil {
+			t.Fatal("expected error for mid-stream JSON error")
+		}
+		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "leaked-query-secret") {
+			t.Fatalf("mid-stream error leaked secret: %v", err)
+		}
+		if !strings.Contains(err.Error(), "REDACTED") {
+			t.Fatalf("expected REDACTED in sanitized mid-stream error, got %v", err)
+		}
+	})
+}
+
+type preRollTestAudioSource struct {
+	mu          sync.Mutex
+	chunks      [][]byte
+	idx         int
+	closed      bool
+	emittedCh   chan struct{}
+	emittedOnce sync.Once
+	waitCh      chan struct{}
+}
+
+func newPreRollTestAudioSource(chunks [][]byte) *preRollTestAudioSource {
+	return &preRollTestAudioSource{
+		chunks:    chunks,
+		emittedCh: make(chan struct{}),
+		waitCh:    make(chan struct{}),
+	}
+}
+
+func (p *preRollTestAudioSource) ReadChunk() ([]byte, error) {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		return nil, io.EOF
+	}
+	if p.idx < len(p.chunks) {
+		c := p.chunks[p.idx]
+		p.idx++
+		p.mu.Unlock()
+		return c, nil
+	}
+	p.mu.Unlock()
+
+	p.emittedOnce.Do(func() {
+		close(p.emittedCh)
+	})
+	<-p.waitCh
+	return nil, io.EOF
+}
+
+func (p *preRollTestAudioSource) Close() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.closed {
+		p.closed = true
+		close(p.waitCh)
+	}
+	return nil
+}
+
+func TestGeminiLiveClient_PreRollBuffersAudioDuringSlowConnect(t *testing.T) {
+	chunk1 := makePCMChunk(800, ChunkBytes)
+	chunk2 := makePCMChunk(900, ChunkBytes)
+
+	var (
+		mu               sync.Mutex
+		handshakeDoneAt  time.Time
+		gotAudioPayloads [][]byte
+		gotStreamEnd     bool
+	)
+
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate slow TLS/WS connect + setup handshake (~200ms total).
+		time.Sleep(120 * time.Millisecond)
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		_, _, err = conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		time.Sleep(80 * time.Millisecond)
+		mu.Lock()
+		handshakeDoneAt = time.Now()
+		mu.Unlock()
+		_ = conn.WriteJSON(map[string]any{"setupComplete": map[string]any{}})
+
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg map[string]any
+			if err := json.Unmarshal(payload, &msg); err != nil {
+				continue
+			}
+			ri, ok := msg["realtimeInput"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if audioObj, ok := ri["audio"].(map[string]any); ok {
+				dataStr, _ := audioObj["data"].(string)
+				decoded, decErr := base64.StdEncoding.DecodeString(dataStr)
+				if decErr == nil {
+					mu.Lock()
+					gotAudioPayloads = append(gotAudioPayloads, decoded)
+					mu.Unlock()
+				}
+			}
+			if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+				mu.Lock()
+				gotStreamEnd = true
+				mu.Unlock()
+				_ = conn.WriteJSON(map[string]any{
+					"serverContent": map[string]any{
+						"inputTranscription": map[string]any{"text": "预录音测试成功"},
+						"turnComplete":       true,
+					},
+				})
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	audio := newPreRollTestAudioSource([][]byte{chunk1, chunk2})
+	stopCh := make(chan struct{})
+	stopDoneCh := make(chan struct{})
+	var stoppedAt time.Time
+
+	go func() {
+		defer close(stopDoneCh)
+		// Wait until BufferedAudioSource has captured both chunks into its pre-roll buffer,
+		// then close stopCh BEFORE the 200ms WebSocket handshake completes.
+		<-audio.emittedCh
+		stoppedAt = time.Now()
+		close(stopCh)
+	}()
+
+	client := NewGeminiLiveClient()
+	client.FinalizeTimeout = 2 * time.Second
+	client.FinalizeGracePeriod = 100 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	finalText, err := client.Run(ctx, audio, stopCh, LiveSessionOptions{
+		APIKey:       "test-preroll-key",
+		LiveWSURL:    "ws" + strings.TrimPrefix(srv.URL, "http"),
+		Model:        "gemini-3.5-transcribe-live",
+		Language:     "zh-CN",
+		Mode:         "VERBATIM",
+		VADSilenceMs: 1200,
+	}, nil)
+	<-stopDoneCh
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if finalText != "预录音测试成功" {
+		t.Fatalf("finalText = %q, want %q", finalText, "预录音测试成功")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !stoppedAt.Before(handshakeDoneAt) {
+		t.Fatalf("expected stopCh to close before handshake completed (stoppedAt=%v, handshakeDoneAt=%v)", stoppedAt, handshakeDoneAt)
+	}
+	if !gotStreamEnd {
+		t.Fatal("expected audioStreamEnd to be sent after draining pre-rolled chunks")
+	}
+	if len(gotAudioPayloads) != 2 || !bytes.Equal(gotAudioPayloads[0], chunk1) || !bytes.Equal(gotAudioPayloads[1], chunk2) {
+		t.Fatalf("expected both pre-rolled chunks to be delivered, got %d payloads", len(gotAudioPayloads))
+	}
+}

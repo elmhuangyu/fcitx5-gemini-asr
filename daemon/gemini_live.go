@@ -249,6 +249,32 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		return "", err
 	}
 
+	bufferedAudio := NewBufferedAudioSource(audio, DefaultPreRollMaxChunks)
+	defer func() { _ = bufferedAudio.Close() }()
+
+	sessionDone := make(chan struct{})
+	var closeSessionOnce sync.Once
+	endSession := func() {
+		closeSessionOnce.Do(func() {
+			close(sessionDone)
+		})
+	}
+	stopWatcherDone := make(chan struct{})
+	go func() {
+		defer close(stopWatcherDone)
+		select {
+		case <-ctx.Done():
+			_ = bufferedAudio.Close()
+		case <-stopCh:
+			bufferedAudio.StopCapture()
+		case <-sessionDone:
+		}
+	}()
+	defer func() {
+		endSession()
+		<-stopWatcherDone
+	}()
+
 	conn, resp, err := dialer.DialContext(ctx, wsURL, nil)
 	if resp != nil && resp.Body != nil {
 		_ = resp.Body.Close()
@@ -265,23 +291,19 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 	}
 	defer closeConn()
 
-	// Ensure context cancellation immediately unblocks ReadChunk and WebSocket ReadMessage.
-	sessionDone := make(chan struct{})
-	defer close(sessionDone)
+	// Ensure context cancellation immediately unblocks WebSocket ReadMessage.
+	connWatcherDone := make(chan struct{})
 	go func() {
+		defer close(connWatcherDone)
 		select {
 		case <-ctx.Done():
-			_ = audio.Close()
 			closeConn()
-		case <-stopCh:
-			_ = audio.Close()
-			select {
-			case <-ctx.Done():
-				closeConn()
-			case <-sessionDone:
-			}
 		case <-sessionDone:
 		}
+	}()
+	defer func() {
+		endSession()
+		<-connWatcherDone
 	}()
 
 	model := strings.TrimSpace(opts.Model)
@@ -504,14 +526,12 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 			return "", ctx.Err()
 		}
 		select {
-		case <-stopCh:
-			goto finalize
 		case <-readerDoneCh:
 			goto finalize
 		default:
 		}
 
-		chunk, err := audio.ReadChunk()
+		chunk, err := bufferedAudio.ReadChunkContext(ctx, readerDoneCh)
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
@@ -547,7 +567,7 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 	}
 
 finalize:
-	_ = audio.Close()
+	bufferedAudio.StopCapture()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
