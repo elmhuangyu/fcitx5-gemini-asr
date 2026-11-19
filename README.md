@@ -1,5 +1,7 @@
 # Fcitx5 Gemini Voice IME (`fcitx5-gemini-asr`)
 
+[![CI](https://github.com/elmhuangyu/fcitx5-gemini-asr/actions/workflows/ci.yml/badge.svg)](https://github.com/elmhuangyu/fcitx5-gemini-asr/actions/workflows/ci.yml)
+
 Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API**, featuring streaming inline preedit, a two-level Rime-style LLM candidate action menu with background prefetching, per-action model routing, and silent TPM2 credential storage.
 
 ## Architecture
