@@ -36,6 +36,7 @@ type cliDeps struct {
 	getenv       func(key string) string
 	serveFn      func(configPath, socketPath string) int
 	runSetupForm func(state *setupFormState, opts setupFormOptions) error
+	verifyAPIKey func(ctx context.Context, cfg Config, apiKey string) (model, reply string, err error)
 }
 
 func defaultCLIDeps() cliDeps {
@@ -68,10 +69,23 @@ func defaultCLIDeps() cliDeps {
 				err:    err,
 			}
 		},
-		lookPath: exec.LookPath,
-		getenv:   os.Getenv,
-		serveFn:  runDaemon,
+		lookPath:     exec.LookPath,
+		getenv:       os.Getenv,
+		serveFn:      runDaemon,
+		verifyAPIKey: defaultVerifyAPIKey,
 	}
+}
+
+func defaultVerifyAPIKey(ctx context.Context, cfg Config, apiKey string) (string, string, error) {
+	model := strings.TrimPrefix(strings.TrimSpace(cfg.PostProcess.Model), "models/")
+	if model == "" {
+		model = DefaultPostProcessModel
+	}
+	reply, err := NewPostProcessor().GenerateRaw(ctx, cfg, apiKey, model, "what model you are", 0.0)
+	if err != nil {
+		return model, "", err
+	}
+	return model, reply, nil
 }
 
 // MaskSecret returns a masked preview of a secret string without exposing its middle characters.
@@ -157,7 +171,7 @@ Commands:
   config              Show, get, or set daemon and Fcitx5 addon settings
   models              Inspect or update live and per-action post-process models
   auth set            Encrypt and store Gemini API key (alias: set-key)
-  auth verify         Verify encrypted credential can be decrypted (alias: verify-key)
+  auth verify         Verify encrypted credential and test API connectivity (alias: verify-key)
   auth status         Show credential status
   auth remove         Delete encrypted credential file (alias: remove-key)
   status              Show full system diagnostics (config, credential, PipeWire, daemon)
@@ -175,7 +189,7 @@ func printAuthUsage(w io.Writer) {
 
 Subcommands:
   set      Encrypt and store Gemini API key using systemd-creds
-  verify   Decrypt-check the stored credential file without printing the secret
+  verify   Decrypt-check the stored credential and test it against the Gemini API
   status   Show credential file and systemd-creds status
   remove   Delete the stored credential file
 `)
@@ -538,6 +552,28 @@ func cmdAuthVerify(args []string, deps cliDeps) int {
 
 	_, _ = fmt.Fprintf(deps.stdout, "OK: %s (name=%s, mode=%04o, key=%s, length=%d)\n",
 		credPath, credName, info.Mode().Perm(), MaskSecret(plain), len(plain))
+
+	cfg, cfgErr := loadConfigOrDefault(*configPath)
+	if cfgErr != nil {
+		_, _ = fmt.Fprintf(deps.stderr, "error: load config %q: %v\n", *configPath, cfgErr)
+		return 1
+	}
+	verifyFn := deps.verifyAPIKey
+	if verifyFn == nil {
+		verifyFn = defaultVerifyAPIKey
+	}
+	apiCtx, apiCancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer apiCancel()
+	model, reply, apiErr := verifyFn(apiCtx, cfg, plain)
+	if apiErr != nil {
+		_, _ = fmt.Fprintf(deps.stderr, "error: API verification failed: %v\n", apiErr)
+		return 1
+	}
+	preview := strings.Join(strings.Fields(reply), " ")
+	if len(preview) > 200 {
+		preview = preview[:197] + "..."
+	}
+	_, _ = fmt.Fprintf(deps.stdout, "API OK (model=%s): %s\n", model, preview)
 	return 0
 }
 

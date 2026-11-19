@@ -3,7 +3,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,15 +94,62 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 		t.Fatalf("cred file mode = %04o, want 0600", info.Mode().Perm())
 	}
 
-	// Verify command
+	// Verify command hits Gemini generateContent API with "what model you are"
+	var gotPrompt string
+	var gotAPIKey string
+	apiStatus := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("x-goog-api-key")
+		body, _ := io.ReadAll(r.Body)
+		var req generateContentRequest
+		_ = json.Unmarshal(body, &req)
+		if len(req.Contents) > 0 && len(req.Contents[0].Parts) > 0 {
+			gotPrompt = req.Contents[0].Parts[0].Text
+		}
+		if apiStatus != http.StatusOK {
+			w.WriteHeader(apiStatus)
+			_, _ = w.Write([]byte(`{"error":{"code":401,"message":"API key invalid","status":"UNAUTHENTICATED"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"I am Gemini 3.5 Flash Lite."}]}}]}`))
+	}))
+	defer srv.Close()
+
+	cfgTOML := "[connection]\napi_base_url = \"" + srv.URL + "\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgTOML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	stdout.Reset()
 	stderr.Reset()
 	code = runCLI("gemini-voice", []string{"verify-key", "--config", cfgPath}, deps)
 	if code != 0 {
 		t.Fatalf("verify-key exit=%d stderr=%s", code, stderr.String())
 	}
-	if strings.Contains(stdout.String(), rawSecret) || !strings.Contains(stdout.String(), "AIza...2345") {
+	if gotAPIKey != rawSecret {
+		t.Fatalf("expected x-goog-api-key=%q, got %q", rawSecret, gotAPIKey)
+	}
+	if gotPrompt != "what model you are" {
+		t.Fatalf("expected prompt %q, got %q", "what model you are", gotPrompt)
+	}
+	if strings.Contains(stdout.String(), rawSecret) ||
+		!strings.Contains(stdout.String(), "AIza...2345") ||
+		!strings.Contains(stdout.String(), "API OK") ||
+		!strings.Contains(stdout.String(), "I am Gemini 3.5 Flash Lite.") {
 		t.Fatalf("unexpected verify output: %s", stdout.String())
+	}
+
+	// Verify fails when API returns an error
+	apiStatus = http.StatusUnauthorized
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLI("gemini-voice", []string{"auth", "verify", "--config", cfgPath}, deps)
+	if code != 1 {
+		t.Fatalf("expected verify failure on 401, got exit=%d", code)
+	}
+	if !strings.Contains(stderr.String(), "API verification failed") || strings.Contains(stderr.String(), rawSecret) {
+		t.Fatalf("unexpected verify failure stderr: %s", stderr.String())
 	}
 
 	// Key-file input

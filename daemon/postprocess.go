@@ -85,26 +85,37 @@ func (p *PostProcessor) Generate(ctx context.Context, cfg Config, apiKey, action
 	if strings.TrimSpace(rawText) == "" {
 		return "", errors.New("raw_text is empty")
 	}
+	return p.GenerateRaw(ctx, cfg, apiKey, cfg.ModelForAction(action), prompt+"\n\n"+rawText, 0.2)
+}
+
+// GenerateRaw sends a single text prompt to the Gemini generateContent API using the given model.
+func (p *PostProcessor) GenerateRaw(ctx context.Context, cfg Config, apiKey, model, userText string, temperature float64) (string, error) {
+	if strings.TrimSpace(userText) == "" {
+		return "", errors.New("prompt text is empty")
+	}
 
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.Connection.APIBaseURL), "/")
 	if baseURL == "" {
 		baseURL = DefaultAPIBaseURL
 	}
-	model := strings.TrimPrefix(cfg.ModelForAction(action), "models/")
+	trimmedModel := strings.TrimPrefix(strings.TrimSpace(model), "models/")
+	if trimmedModel == "" {
+		trimmedModel = DefaultPostProcessModel
+	}
 
-	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", baseURL, model)
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent", baseURL, trimmedModel)
 
 	reqPayload := generateContentRequest{
 		Contents: []generateContentItem{
 			{
 				Role: "user",
 				Parts: []generateContentPart{
-					{Text: prompt + "\n\n" + rawText},
+					{Text: userText},
 				},
 			},
 		},
 		GenerationConfig: &generateContentConfig{
-			Temperature: 0.2,
+			Temperature: temperature,
 		},
 	}
 
