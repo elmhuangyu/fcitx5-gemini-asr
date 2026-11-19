@@ -271,7 +271,7 @@ func readSecretInput(deps cliDeps, keyFile string, useStdin bool) (string, error
 		if info.IsDir() {
 			return "", fmt.Errorf("key file %q is a directory", keyFile)
 		}
-		data, err := os.ReadFile(keyFile)
+		data, err := readBoundedFile(keyFile, maxCredentialBytes)
 		if err != nil {
 			return "", fmt.Errorf("read key file %q: %w", keyFile, err)
 		}
@@ -283,9 +283,12 @@ func readSecretInput(deps cliDeps, keyFile string, useStdin bool) (string, error
 	}
 
 	if useStdin || !deps.isTTY() {
-		data, err := io.ReadAll(io.LimitReader(deps.stdin, 64*1024))
+		data, err := io.ReadAll(io.LimitReader(deps.stdin, maxCredentialBytes+1))
 		if err != nil {
 			return "", fmt.Errorf("read API key from stdin: %w", err)
+		}
+		if int64(len(data)) > maxCredentialBytes {
+			return "", fmt.Errorf("API key from stdin exceeds maximum allowed size of %d bytes", maxCredentialBytes)
 		}
 		key := strings.TrimSpace(string(data))
 		if key == "" {
@@ -391,10 +394,14 @@ func encryptAndSaveCredential(opts authSetOptions, deps cliDeps) error {
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return fmt.Errorf("chmod temporary credential file: %w", err)
 	}
+	if err := syncFilePath(tmpPath); err != nil {
+		return fmt.Errorf("sync temporary credential file: %w", err)
+	}
 	if err := os.Rename(tmpPath, outPath); err != nil {
 		return fmt.Errorf("install credential file %q: %w", outPath, err)
 	}
 	renamed = true
+	syncDir(dir)
 
 	if !opts.noVerify {
 		decRes := deps.runCmd(
@@ -786,6 +793,27 @@ func cmdInit(args []string, deps cliDeps) int {
 	return 0
 }
 
+func syncFilePath(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
+}
+
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	_ = d.Close()
+}
+
 func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".tmp-*")
@@ -808,6 +836,10 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		_ = tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
@@ -815,5 +847,6 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	cleanup = false
+	syncDir(dir)
 	return nil
 }

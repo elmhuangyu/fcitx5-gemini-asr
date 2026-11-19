@@ -249,3 +249,108 @@ func TestCLI_InitStatusAndDaemonDispatch(t *testing.T) {
 		t.Fatalf("daemon got cfg=%q sock=%q", servedCfg, servedSock)
 	}
 }
+
+func TestWriteFileAtomicAndSyncHelpers(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config.toml")
+
+	if err := writeFileAtomic(target, []byte("first\n"), 0o600); err != nil {
+		t.Fatalf("initial writeFileAtomic: %v", err)
+	}
+	if err := writeFileAtomic(target, []byte("second\n"), 0o600); err != nil {
+		t.Fatalf("overwrite writeFileAtomic: %v", err)
+	}
+
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(data) != "second\n" {
+		t.Fatalf("got %q, want %q", string(data), "second\n")
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat target: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("mode = %04o, want 0600", info.Mode().Perm())
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read dir: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.toml" {
+		t.Fatalf("expected only config.toml in dir, got %d entries", len(entries))
+	}
+
+	if err := syncFilePath(target); err != nil {
+		t.Fatalf("syncFilePath existing file: %v", err)
+	}
+	if err := syncFilePath(filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("expected error from syncFilePath on missing file")
+	}
+
+	syncDir(dir)
+	syncDir(filepath.Join(dir, "missing-dir"))
+}
+
+func TestCLI_AuthSetRejectsOversizedInput(t *testing.T) {
+	cases := []struct {
+		name     string
+		makeArgs func(t *testing.T, dir, cfgPath string) ([]string, []byte)
+	}{
+		{
+			name: "oversized_key_file",
+			makeArgs: func(t *testing.T, dir, cfgPath string) ([]string, []byte) {
+				t.Helper()
+				keyFile := filepath.Join(dir, "oversized.key")
+				if err := os.WriteFile(keyFile, bytes.Repeat([]byte("k"), maxCredentialBytes+1), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				return []string{"auth", "set", "--config", cfgPath, "--key-file", keyFile}, nil
+			},
+		},
+		{
+			name: "oversized_stdin",
+			makeArgs: func(_ *testing.T, _, cfgPath string) ([]string, []byte) {
+				return []string{"auth", "set", "--config", cfgPath, "--stdin"}, bytes.Repeat([]byte("s"), maxCredentialBytes+1)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+			args, stdinData := tc.makeArgs(t, dir, cfgPath)
+
+			cmdCalled := false
+			var stdout, stderr bytes.Buffer
+			deps := cliDeps{
+				stdin:  bytes.NewReader(stdinData),
+				stdout: &stdout,
+				stderr: &stderr,
+				isTTY:  func() bool { return false },
+				runCmd: func(context.Context, string, string, ...string) cmdResult {
+					cmdCalled = true
+					return cmdResult{}
+				},
+				lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+				getenv:   func(string) string { return "" },
+				serveFn:  func(string, string) int { return 0 },
+			}
+
+			code := runCLI("gemini-voice", args, deps)
+			if code == 0 {
+				t.Fatalf("expected non-zero exit for %s", tc.name)
+			}
+			if cmdCalled {
+				t.Fatalf("expected systemd-creds not to be invoked for %s", tc.name)
+			}
+			if !strings.Contains(stderr.String(), "exceeds maximum allowed size") {
+				t.Fatalf("expected maximum size error in stderr, got: %s", stderr.String())
+			}
+		})
+	}
+}

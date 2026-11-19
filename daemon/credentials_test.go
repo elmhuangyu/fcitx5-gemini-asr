@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,5 +66,36 @@ func TestRedactURLAndSanitizeError(t *testing.T) {
 	}
 	if !strings.Contains(redacted, "REDACTED") {
 		t.Fatalf("expected REDACTED marker in %q", redacted)
+	}
+}
+
+func TestLoadAPIKey_RejectsOversizedCredential(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("CREDENTIALS_DIRECTORY", dir)
+
+	maxPath := filepath.Join(dir, "exact_limit")
+	exact := bytes.Repeat([]byte("a"), maxCredentialBytes)
+	if err := os.WriteFile(maxPath, exact, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadAPIKey("exact_limit", "GEMINI_API_KEY")
+	if err != nil {
+		t.Fatalf("expected %d-byte credential to succeed, got error: %v", maxCredentialBytes, err)
+	}
+	if len(got) != maxCredentialBytes {
+		t.Fatalf("got key length %d, want %d", len(got), maxCredentialBytes)
+	}
+
+	oversizedPath := filepath.Join(dir, "gemini_api_key")
+	oversized := bytes.Repeat([]byte("a"), maxCredentialBytes+1)
+	if err := os.WriteFile(oversizedPath, oversized, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = LoadAPIKey("gemini_api_key", "GEMINI_API_KEY")
+	if err == nil {
+		t.Fatal("expected error for oversized credential file")
+	}
+	if !strings.Contains(err.Error(), "exceeds maximum allowed size") {
+		t.Fatalf("expected maximum size error, got: %v", err)
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 const (
 	DefaultCredentialName = "gemini_api_key"
 	DefaultFallbackEnv    = "GEMINI_API_KEY"
+	maxCredentialBytes    = 64 * 1024
 )
 
 var keyParamFallbackRe = regexp.MustCompile(`([?&](?:key|api_key|token)=)[^&\s"]+`)
@@ -35,7 +37,7 @@ func LoadAPIKey(credName, fallbackEnv string) (string, error) {
 
 	if credDir := strings.TrimSpace(os.Getenv("CREDENTIALS_DIRECTORY")); credDir != "" {
 		credPath := filepath.Join(credDir, credName)
-		data, err := os.ReadFile(credPath)
+		data, err := readBoundedFile(credPath, maxCredentialBytes)
 		if err != nil {
 			return "", fmt.Errorf("failed to read credential %q from CREDENTIALS_DIRECTORY: %w", credName, err)
 		}
@@ -51,6 +53,23 @@ func LoadAPIKey(credName, fallbackEnv string) (string, error) {
 		return "", fmt.Errorf("GEMINI API key not found: CREDENTIALS_DIRECTORY is unset and environment variable %s is empty", fallbackEnv)
 	}
 	return key, nil
+}
+
+func readBoundedFile(path string, maxBytes int64) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, fmt.Errorf("file %q exceeds maximum allowed size of %d bytes", path, maxBytes)
+	}
+	return data, nil
 }
 
 func validateCredentialName(name string) error {
