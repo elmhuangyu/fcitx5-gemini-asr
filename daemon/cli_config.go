@@ -59,7 +59,9 @@ Common keys for "config get" / "config set":
   ime.socket_path              Unix socket path for addon <-> daemon
   ime.language                 Optional frontend language override (empty = use daemon)
   live.model                   Gemini Live transcription model
-  live.language                Transcription language (e.g. zh-CN, en-US, auto)
+  live.language                Transcription language (e.g. auto, cmn-Hans-CN, en-US, cmn-Hans-CN,en-US)
+  live.mode                    Live transcription mode (VERBATIM | SMART)
+  live.custom_vocabulary       Comma-separated terms to bias recognition (or "none")
   live.vad_silence_ms          Silence timeout in ms (0 disables auto-stop)
   live.vad_threshold           RMS energy threshold for speech detection
   post_process.model           Default post-processing model
@@ -112,6 +114,10 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	if prefetchVal == "" {
 		prefetchVal = "(none)"
 	}
+	vocabVal := strings.Join(cfg.LiveTranscribe.CustomVocabulary, ", ")
+	if vocabVal == "" {
+		vocabVal = "(none)"
+	}
 	fcitxLang := fcitxCfg.Language
 	if fcitxLang == "" {
 		fcitxLang = "(use daemon)"
@@ -129,6 +135,8 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	_, _ = fmt.Fprintf(w, "  connection.credential:    %s (fallback env: %s)\n", cfg.Connection.CredentialName, cfg.Connection.FallbackEnv)
 	_, _ = fmt.Fprintf(w, "  live.model:               %s\n", cfg.LiveTranscribe.Model)
 	_, _ = fmt.Fprintf(w, "  live.language:            %s\n", cfg.LiveTranscribe.Language)
+	_, _ = fmt.Fprintf(w, "  live.mode:                %s\n", cfg.LiveTranscribe.Mode)
+	_, _ = fmt.Fprintf(w, "  live.custom_vocabulary:   %s\n", vocabVal)
 	_, _ = fmt.Fprintf(w, "  live.vad_silence_ms:      %d\n", cfg.LiveTranscribe.VADSilenceMs)
 	_, _ = fmt.Fprintf(w, "  live.vad_threshold:       %.0f\n", cfg.LiveTranscribe.VADThreshold)
 	_, _ = fmt.Fprintf(w, "  post_process.model:       %s\n", cfg.PostProcess.Model)
@@ -227,6 +235,10 @@ func getConfigKey(cfg Config, fcitxCfg FcitxAddonConfig, key string) (string, er
 		return cfg.LiveTranscribe.Model, nil
 	case "live.language", "live_transcribe.language":
 		return cfg.LiveTranscribe.Language, nil
+	case "live.mode", "live_transcribe.mode":
+		return cfg.LiveTranscribe.Mode, nil
+	case "live.custom_vocabulary", "live_transcribe.custom_vocabulary":
+		return strings.Join(cfg.LiveTranscribe.CustomVocabulary, ","), nil
 	case "live.vad_silence_ms", "live_transcribe.vad_silence_ms":
 		return strconv.Itoa(cfg.LiveTranscribe.VADSilenceMs), nil
 	case "live.vad_threshold", "live_transcribe.vad_threshold":
@@ -448,6 +460,30 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 			return false, false, errors.New("live.language cannot be empty")
 		}
 		cfg.LiveTranscribe.Language = trimmed
+		return true, false, nil
+	case "live.mode", "live_transcribe.mode":
+		if strings.TrimSpace(val) == "" {
+			return false, false, errors.New("live.mode cannot be empty (expected VERBATIM or SMART)")
+		}
+		mode, mErr := NormalizeLiveMode(val)
+		if mErr != nil {
+			return false, false, mErr
+		}
+		cfg.LiveTranscribe.Mode = mode
+		return true, false, nil
+	case "live.custom_vocabulary", "live_transcribe.custom_vocabulary":
+		terms, listErr := parseCommaList(val)
+		if listErr != nil {
+			return false, false, fmt.Errorf("invalid custom_vocabulary list: %w", listErr)
+		}
+		if len(terms) > MaxCustomVocabulary {
+			return false, false, fmt.Errorf("custom_vocabulary has %d entries (max %d)", len(terms), MaxCustomVocabulary)
+		}
+		if len(terms) == 0 {
+			cfg.LiveTranscribe.CustomVocabulary = nil
+		} else {
+			cfg.LiveTranscribe.CustomVocabulary = terms
+		}
 		return true, false, nil
 	case "live.vad_silence_ms", "live_transcribe.vad_silence_ms":
 		ms, convErr := strconv.Atoi(strings.TrimSpace(val))
@@ -721,7 +757,7 @@ func runConfigureWizard(configPath, fcitxConfigPath string, deps cliDeps) error 
 		break
 	}
 
-	lang, err := promptValue(deps.stdin, deps.stderr, "Transcription language (zh-CN, en-US, auto)", cfg.LiveTranscribe.Language)
+	lang, err := promptValue(deps.stdin, deps.stderr, "Transcription language (auto, cmn-Hans-CN, en-US, cmn-Hans-CN,en-US)", cfg.LiveTranscribe.Language)
 	if err != nil {
 		return err
 	}

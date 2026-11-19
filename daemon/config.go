@@ -22,7 +22,13 @@ import (
 	"golang.org/x/net/proxy"
 )
 
-const DefaultVADThreshold = 300.0
+const (
+	DefaultVADThreshold = 300.0
+	DefaultLiveModel    = "gemini-3.5-transcribe-live"
+	DefaultLiveLanguage = "auto"
+	DefaultLiveMode     = "VERBATIM"
+	MaxCustomVocabulary = 1000
+)
 
 // KnownActions lists built-in post-processing action keys in menu display order.
 var KnownActions = []string{
@@ -49,10 +55,12 @@ type ConnectionConfig struct {
 }
 
 type LiveTranscribeConfig struct {
-	Model        string  `toml:"model"`
-	Language     string  `toml:"language"`
-	VADSilenceMs int     `toml:"vad_silence_ms"`
-	VADThreshold float64 `toml:"vad_threshold,omitempty"`
+	Model            string   `toml:"model"`
+	Language         string   `toml:"language"`
+	Mode             string   `toml:"mode,omitempty"`
+	CustomVocabulary []string `toml:"custom_vocabulary,omitempty"`
+	VADSilenceMs     int      `toml:"vad_silence_ms"`
+	VADThreshold     float64  `toml:"vad_threshold,omitempty"`
 }
 
 type PostProcessConfig struct {
@@ -69,8 +77,9 @@ func DefaultConfig() Config {
 			Proxy:          "",
 		},
 		LiveTranscribe: LiveTranscribeConfig{
-			Model:        "gemini-3.5-transcribe-live",
-			Language:     "zh-CN",
+			Model:        DefaultLiveModel,
+			Language:     DefaultLiveLanguage,
+			Mode:         DefaultLiveMode,
 			VADSilenceMs: 1200,
 			VADThreshold: DefaultVADThreshold,
 		},
@@ -97,7 +106,9 @@ proxy = ""
 
 [live_transcribe]
 model = "gemini-3.5-transcribe-live"
-language = "zh-CN" # Supported: "zh-CN", "en-US", "auto"
+language = "auto" # "auto" (85+ languages & code-switching), or comma-separated BCP-47 (e.g. "cmn-Hans-CN,en-US"; "zh-CN" aliases to "cmn-Hans-CN")
+mode = "VERBATIM"        # "VERBATIM" (literal) or "SMART" (disfluency cleanup & formatting)
+# custom_vocabulary = ["Fcitx5", "PipeWire", "Gemini"]
 vad_silence_ms = 1200
 
 [post_process]
@@ -121,8 +132,46 @@ as_prompt = "将以下口述需求整理为结构清晰、条件明确的 AI Pro
 `
 }
 
+// NormalizeLiveMode validates and canonicalizes a Live transcription mode string.
+func NormalizeLiveMode(raw string) (string, error) {
+	switch strings.ToUpper(strings.TrimSpace(raw)) {
+	case "", "VERBATIM":
+		return "VERBATIM", nil
+	case "SMART":
+		return "SMART", nil
+	default:
+		return "", fmt.Errorf("invalid live.mode %q (expected VERBATIM or SMART)", raw)
+	}
+}
+
+func pruneCustomVocabulary(terms []string) []string {
+	if len(terms) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(terms))
+	seen := make(map[string]struct{}, len(terms))
+	for _, t := range terms {
+		trimmed := strings.TrimSpace(t)
+		if trimmed == "" {
+			continue
+		}
+		if _, dup := seen[trimmed]; dup {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func (c Config) Clone() Config {
 	out := c
+	if c.LiveTranscribe.CustomVocabulary != nil {
+		out.LiveTranscribe.CustomVocabulary = append([]string(nil), c.LiveTranscribe.CustomVocabulary...)
+	}
 	if c.PostProcess.Prefetch != nil {
 		out.PostProcess.Prefetch = append([]string(nil), c.PostProcess.Prefetch...)
 	}
@@ -179,6 +228,7 @@ func SaveConfigFile(path string, cfg Config) error {
 	}
 
 	toWrite := cfg.Clone()
+	toWrite.LiveTranscribe.CustomVocabulary = pruneCustomVocabulary(toWrite.LiveTranscribe.CustomVocabulary)
 	if toWrite.PostProcess.Prefetch == nil {
 		toWrite.PostProcess.Prefetch = []string{}
 	}
@@ -216,7 +266,16 @@ func LoadConfigFile(path string) (Config, error) {
 		cfg.Connection.FallbackEnv = DefaultFallbackEnv
 	}
 	if strings.TrimSpace(cfg.LiveTranscribe.Model) == "" {
-		cfg.LiveTranscribe.Model = "gemini-3.5-transcribe-live"
+		cfg.LiveTranscribe.Model = DefaultLiveModel
+	}
+	mode, err := NormalizeLiveMode(cfg.LiveTranscribe.Mode)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.LiveTranscribe.Mode = mode
+	cfg.LiveTranscribe.CustomVocabulary = pruneCustomVocabulary(cfg.LiveTranscribe.CustomVocabulary)
+	if len(cfg.LiveTranscribe.CustomVocabulary) > MaxCustomVocabulary {
+		return Config{}, fmt.Errorf("live_transcribe.custom_vocabulary has %d entries (max %d)", len(cfg.LiveTranscribe.CustomVocabulary), MaxCustomVocabulary)
 	}
 	if cfg.LiveTranscribe.VADThreshold <= 0 {
 		cfg.LiveTranscribe.VADThreshold = DefaultVADThreshold

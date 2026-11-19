@@ -10,8 +10,9 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 )
@@ -22,13 +23,15 @@ const (
 )
 
 type LiveSessionOptions struct {
-	APIKey       string
-	Proxy        string
-	LiveWSURL    string
-	Model        string
-	Language     string
-	VADSilenceMs int
-	VADThreshold float64
+	APIKey           string
+	Proxy            string
+	LiveWSURL        string
+	Model            string
+	Language         string
+	Mode             string
+	CustomVocabulary []string
+	VADSilenceMs     int
+	VADThreshold     float64
 }
 
 type LiveTranscriber interface {
@@ -36,14 +39,16 @@ type LiveTranscriber interface {
 }
 
 type GeminiLiveClient struct {
-	SetupTimeout    time.Duration
-	FinalizeTimeout time.Duration
+	SetupTimeout        time.Duration
+	FinalizeTimeout     time.Duration
+	FinalizeGracePeriod time.Duration
 }
 
 func NewGeminiLiveClient() *GeminiLiveClient {
 	return &GeminiLiveClient{
-		SetupTimeout:    10 * time.Second,
-		FinalizeTimeout: 5 * time.Second,
+		SetupTimeout:        10 * time.Second,
+		FinalizeTimeout:     5 * time.Second,
+		FinalizeGracePeriod: 300 * time.Millisecond,
 	}
 }
 
@@ -52,14 +57,15 @@ type liveSetupMessage struct {
 }
 
 type liveSetupPayload struct {
-	Model             string                `json:"model"`
-	GenerationConfig  liveGenerationConfig  `json:"generationConfig"`
-	SystemInstruction liveSystemInstruction `json:"systemInstruction"`
+	Model                   string                        `json:"model"`
+	GenerationConfig        liveGenerationConfig          `json:"generationConfig"`
+	SystemInstruction       *liveSystemInstruction        `json:"systemInstruction,omitempty"`
+	InputAudioTranscription *liveAudioTranscriptionConfig `json:"inputAudioTranscription,omitempty"`
 }
 
 type liveGenerationConfig struct {
 	ResponseModalities []string `json:"responseModalities"`
-	Temperature        float64  `json:"temperature"`
+	Temperature        *float64 `json:"temperature,omitempty"`
 }
 
 type liveSystemInstruction struct {
@@ -70,16 +76,22 @@ type liveTextPart struct {
 	Text string `json:"text"`
 }
 
+type liveAudioTranscriptionConfig struct {
+	LanguageCodes    []string `json:"languageCodes"`
+	CustomVocabulary []string `json:"customVocabulary,omitempty"`
+	Mode             string   `json:"mode,omitempty"`
+}
+
 type liveRealtimeInputMessage struct {
 	RealtimeInput liveRealtimeInputPayload `json:"realtimeInput"`
 }
 
 type liveRealtimeInputPayload struct {
-	MediaChunks    []liveMediaChunk `json:"mediaChunks,omitempty"`
-	AudioStreamEnd bool             `json:"audioStreamEnd,omitempty"`
+	Audio          *liveBlob `json:"audio,omitempty"`
+	AudioStreamEnd bool      `json:"audioStreamEnd,omitempty"`
 }
 
-type liveMediaChunk struct {
+type liveBlob struct {
 	MimeType string `json:"mimeType"`
 	Data     string `json:"data"`
 }
@@ -92,6 +104,10 @@ type liveClientContentPayload struct {
 	TurnComplete bool `json:"turnComplete"`
 }
 
+type liveTranscription struct {
+	Text string `json:"text"`
+}
+
 type liveServerMessage struct {
 	SetupComplete json.RawMessage `json:"setupComplete"`
 	ServerContent *struct {
@@ -101,11 +117,10 @@ type liveServerMessage struct {
 				Thought bool   `json:"thought"`
 			} `json:"parts"`
 		} `json:"modelTurn"`
-		InputTranscription *struct {
-			Text string `json:"text"`
-		} `json:"inputTranscription"`
-		TurnComplete       bool `json:"turnComplete"`
-		GenerationComplete bool `json:"generationComplete"`
+		InterimInputTranscription *liveTranscription `json:"interimInputTranscription"`
+		InputTranscription        *liveTranscription `json:"inputTranscription"`
+		TurnComplete              bool               `json:"turnComplete"`
+		GenerationComplete        bool               `json:"generationComplete"`
 	} `json:"serverContent"`
 	Error *struct {
 		Code    int    `json:"code"`
@@ -114,9 +129,106 @@ type liveServerMessage struct {
 	} `json:"error"`
 }
 
+var languageCodeAliases = map[string]string{
+	"zh":          "cmn-Hans-CN",
+	"zh-cn":       "cmn-Hans-CN",
+	"zh-hans":     "cmn-Hans-CN",
+	"zh-hans-cn":  "cmn-Hans-CN",
+	"cmn":         "cmn-Hans-CN",
+	"cmn-cn":      "cmn-Hans-CN",
+	"cmn-hans":    "cmn-Hans-CN",
+	"cmn-hans-cn": "cmn-Hans-CN",
+	"zh-hk":       "yue-Hant-HK",
+	"yue":         "yue-Hant-HK",
+	"yue-hk":      "yue-Hant-HK",
+	"yue-hant":    "yue-Hant-HK",
+	"yue-hant-hk": "yue-Hant-HK",
+}
+
+// NormalizeLanguageCodes converts user language settings (including "auto" and
+// common aliases such as "zh-CN") into a non-nil slice of BCP-47 hints for
+// AudioTranscriptionConfig.languageCodes.
+func NormalizeLanguageCodes(raw string) []string {
+	out := []string{}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return out
+	}
+	seen := make(map[string]struct{})
+	for _, part := range strings.Split(trimmed, ",") {
+		tok := strings.ReplaceAll(strings.TrimSpace(part), "_", "-")
+		if tok == "" {
+			continue
+		}
+		if strings.EqualFold(tok, "auto") {
+			return []string{}
+		}
+		if canonical, ok := languageCodeAliases[strings.ToLower(tok)]; ok {
+			tok = canonical
+		}
+		if _, dup := seen[tok]; dup {
+			continue
+		}
+		seen[tok] = struct{}{}
+		out = append(out, tok)
+	}
+	return out
+}
+
+func isTranscribeLiveModel(model string) bool {
+	return strings.Contains(strings.ToLower(model), "transcribe")
+}
+
+func isASCIIAlnum(r rune) bool {
+	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+}
+
+func isASCIIPunct(r rune) bool {
+	switch r {
+	case '.', ',', '!', '?', ';', ':':
+		return true
+	default:
+		return false
+	}
+}
+
+func joinTranscriptSegments(base, next string) string {
+	if base == "" {
+		return next
+	}
+	if next == "" {
+		return base
+	}
+	last, _ := utf8.DecodeLastRuneInString(base)
+	first, _ := utf8.DecodeRuneInString(next)
+	if unicode.IsSpace(last) || unicode.IsSpace(first) {
+		return base + next
+	}
+	if (isASCIIAlnum(last) || isASCIIPunct(last)) && isASCIIAlnum(first) {
+		return base + " " + next
+	}
+	return base + next
+}
+
+func notifySignal(ch chan struct{}) {
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
+
 func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-chan struct{}, opts LiveSessionOptions, onPartial func(string)) (string, error) {
 	if audio == nil {
 		return "", errors.New("audio source is nil")
+	}
+
+	mode, err := NormalizeLiveMode(opts.Mode)
+	if err != nil {
+		return "", err
+	}
+	vocab := pruneCustomVocabulary(opts.CustomVocabulary)
+	if len(vocab) > MaxCustomVocabulary {
+		return "", fmt.Errorf("custom_vocabulary has %d entries (max %d)", len(vocab), MaxCustomVocabulary)
 	}
 
 	rawWSURL := strings.TrimSpace(opts.LiveWSURL)
@@ -174,17 +286,14 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 
 	model := strings.TrimSpace(opts.Model)
 	if model == "" {
-		model = "gemini-3.5-transcribe-live"
+		model = DefaultLiveModel
 	}
 	if !strings.HasPrefix(model, "models/") {
 		model = "models/" + model
 	}
 
-	instruction := DefaultSystemInstruction
-	lang := strings.TrimSpace(opts.Language)
-	if lang != "" && !strings.EqualFold(lang, "auto") {
-		instruction += " Primary language: " + lang + "."
-	}
+	isTranscribe := isTranscribeLiveModel(model)
+	langCodes := NormalizeLanguageCodes(opts.Language)
 
 	var writeMu sync.Mutex
 	writeJSON := func(v any) error {
@@ -194,19 +303,31 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		return conn.WriteJSON(v)
 	}
 
-	setupMsg := liveSetupMessage{
-		Setup: liveSetupPayload{
-			Model: model,
-			GenerationConfig: liveGenerationConfig{
-				ResponseModalities: []string{"TEXT"},
-				Temperature:        0.0,
-			},
-			SystemInstruction: liveSystemInstruction{
-				Parts: []liveTextPart{{Text: instruction}},
-			},
+	setupPayload := liveSetupPayload{
+		Model: model,
+		GenerationConfig: liveGenerationConfig{
+			ResponseModalities: []string{"TEXT"},
+		},
+		InputAudioTranscription: &liveAudioTranscriptionConfig{
+			LanguageCodes:    langCodes,
+			CustomVocabulary: vocab,
 		},
 	}
-	if err := writeJSON(setupMsg); err != nil {
+	if isTranscribe {
+		setupPayload.InputAudioTranscription.Mode = mode
+	} else {
+		temp := 0.0
+		setupPayload.GenerationConfig.Temperature = &temp
+		instruction := DefaultSystemInstruction
+		if len(langCodes) > 0 {
+			instruction += " Primary language: " + strings.Join(langCodes, ", ") + "."
+		}
+		setupPayload.SystemInstruction = &liveSystemInstruction{
+			Parts: []liveTextPart{{Text: instruction}},
+		}
+	}
+
+	if err := writeJSON(liveSetupMessage{Setup: setupPayload}); err != nil {
 		return "", fmt.Errorf("send Gemini Live setup: %s", SanitizeError(err, opts.APIKey))
 	}
 
@@ -237,19 +358,21 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 	_ = conn.SetReadDeadline(time.Time{})
 
 	var (
-		textMu            sync.Mutex
-		accText           strings.Builder
-		readerErr         error
-		awaitingFinalTurn atomic.Bool
-		finalTurnOnce     sync.Once
-		finalTurnCh       = make(chan struct{})
-		readerDoneCh      = make(chan struct{})
+		textMu                sync.Mutex
+		committed             string
+		interim               string
+		lastSnapshot          string
+		sawInputTranscription bool
+		speechSinceLastFinal  bool
+		awaitingFinalTurn     bool
+		gotFinalAfterEnd      bool
+		gotTurnDoneAfterEnd   bool
+		readerErr             error
+		apiErr                error
+		finalDoneCh           = make(chan struct{}, 1)
+		graceTriggerCh        = make(chan struct{}, 1)
+		readerDoneCh          = make(chan struct{})
 	)
-	signalFinalTurn := func() {
-		finalTurnOnce.Do(func() {
-			close(finalTurnCh)
-		})
-	}
 
 	go func() {
 		defer close(readerDoneCh)
@@ -267,7 +390,7 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 			}
 			if msg.Error != nil {
 				textMu.Lock()
-				readerErr = fmt.Errorf("gemini live error (%d %s): %s", msg.Error.Code, msg.Error.Status, msg.Error.Message)
+				apiErr = fmt.Errorf("gemini live error (%d %s): %s", msg.Error.Code, msg.Error.Status, msg.Error.Message)
 				textMu.Unlock()
 				return
 			}
@@ -275,31 +398,89 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 				continue
 			}
 
-			var delta strings.Builder
-			if msg.ServerContent.ModelTurn != nil {
-				for _, part := range msg.ServerContent.ModelTurn.Parts {
+			sc := msg.ServerContent
+			var (
+				gotFinal    bool
+				turnDone    = sc.TurnComplete || sc.GenerationComplete
+				snapshot    string
+				emitPartial bool
+				shouldDone  bool
+				shouldGrace bool
+			)
+
+			textMu.Lock()
+			if sc.InterimInputTranscription != nil {
+				interim = sc.InterimInputTranscription.Text
+				if interim != "" {
+					speechSinceLastFinal = true
+				}
+			}
+			if sc.InputTranscription != nil {
+				sawInputTranscription = true
+				interim = ""
+				speechSinceLastFinal = false
+				gotFinal = true
+				text := sc.InputTranscription.Text
+				if isTranscribe && mode == "SMART" {
+					committed = text
+				} else if text != "" {
+					committed = joinTranscriptSegments(committed, text)
+				}
+			}
+			if sc.ModelTurn != nil && !sawInputTranscription && sc.InputTranscription == nil && sc.InterimInputTranscription == nil {
+				var modelDelta strings.Builder
+				for _, part := range sc.ModelTurn.Parts {
 					if part.Thought || part.Text == "" {
 						continue
 					}
-					delta.WriteString(part.Text)
+					modelDelta.WriteString(part.Text)
 				}
-			}
-			if delta.Len() == 0 && msg.ServerContent.InputTranscription != nil && msg.ServerContent.InputTranscription.Text != "" {
-				delta.WriteString(msg.ServerContent.InputTranscription.Text)
-			}
-
-			if delta.Len() > 0 {
-				textMu.Lock()
-				accText.WriteString(delta.String())
-				snapshot := accText.String()
-				textMu.Unlock()
-				if onPartial != nil && ctx.Err() == nil {
-					onPartial(snapshot)
+				if modelDelta.Len() > 0 {
+					committed += modelDelta.String()
 				}
 			}
 
-			if (msg.ServerContent.TurnComplete || msg.ServerContent.GenerationComplete) && awaitingFinalTurn.Load() {
-				signalFinalTurn()
+			curSnapshot := joinTranscriptSegments(committed, interim)
+			if curSnapshot != lastSnapshot {
+				lastSnapshot = curSnapshot
+				snapshot = curSnapshot
+				emitPartial = true
+			}
+
+			if awaitingFinalTurn {
+				if gotFinal {
+					gotFinalAfterEnd = true
+				}
+				if turnDone {
+					gotTurnDoneAfterEnd = true
+				}
+				if !isTranscribe {
+					if gotTurnDoneAfterEnd {
+						shouldDone = true
+					}
+				} else {
+					if gotFinalAfterEnd && gotTurnDoneAfterEnd {
+						shouldDone = true
+					} else if gotFinal {
+						shouldGrace = true
+					} else if turnDone {
+						if interim == "" && !speechSinceLastFinal && committed != "" {
+							shouldDone = true
+						} else {
+							shouldGrace = true
+						}
+					}
+				}
+			}
+			textMu.Unlock()
+
+			if emitPartial && onPartial != nil && ctx.Err() == nil {
+				onPartial(snapshot)
+			}
+			if shouldDone {
+				notifySignal(finalDoneCh)
+			} else if shouldGrace {
+				notifySignal(graceTriggerCh)
 			}
 		}
 	}()
@@ -308,8 +489,15 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		<-readerDoneCh
 	}()
 
-	vad := NewVADDetector(opts.VADThreshold, opts.VADSilenceMs)
-	var sendErr error
+	vadThreshold := opts.VADThreshold
+	if vadThreshold <= 0 {
+		vadThreshold = DefaultVADThreshold
+	}
+	vad := NewVADDetector(vadThreshold, opts.VADSilenceMs)
+	var (
+		sendErr   error
+		sentAudio bool
+	)
 
 	for {
 		if ctx.Err() != nil {
@@ -330,17 +518,21 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		if len(chunk) > 0 {
 			frame := liveRealtimeInputMessage{
 				RealtimeInput: liveRealtimeInputPayload{
-					MediaChunks: []liveMediaChunk{
-						{
-							MimeType: fmt.Sprintf("audio/pcm;rate=%d", SampleRate),
-							Data:     base64.StdEncoding.EncodeToString(chunk),
-						},
+					Audio: &liveBlob{
+						MimeType: fmt.Sprintf("audio/pcm;rate=%d", SampleRate),
+						Data:     base64.StdEncoding.EncodeToString(chunk),
 					},
 				},
 			}
 			if wErr := writeJSON(frame); wErr != nil {
 				sendErr = wErr
 				break
+			}
+			sentAudio = true
+			if ComputeRMS(chunk) >= vadThreshold {
+				textMu.Lock()
+				speechSinceLastFinal = true
+				textMu.Unlock()
 			}
 			if vad.Feed(chunk) {
 				break
@@ -360,31 +552,96 @@ finalize:
 		return "", ctx.Err()
 	}
 
-	awaitingFinalTurn.Store(true)
-	_ = writeJSON(liveRealtimeInputMessage{
-		RealtimeInput: liveRealtimeInputPayload{
-			AudioStreamEnd: true,
-		},
-	})
-	_ = writeJSON(liveClientContentMessage{
-		ClientContent: liveClientContentPayload{
-			TurnComplete: true,
-		},
-	})
+	finalizedCleanly := false
+	if sentAudio {
+		textMu.Lock()
+		awaitingFinalTurn = true
+		alreadySettled := isTranscribe && committed != "" && interim == "" && !speechSinceLastFinal
+		textMu.Unlock()
 
-	finalizeTimeout := c.FinalizeTimeout
-	if finalizeTimeout <= 0 {
-		finalizeTimeout = 5 * time.Second
-	}
-	timer := time.NewTimer(finalizeTimeout)
-	defer timer.Stop()
+		readerClosed := false
+		select {
+		case <-readerDoneCh:
+			readerClosed = true
+		default:
+		}
+		if !readerClosed {
+			if wErr := writeJSON(liveRealtimeInputMessage{
+				RealtimeInput: liveRealtimeInputPayload{
+					AudioStreamEnd: true,
+				},
+			}); wErr != nil && sendErr == nil {
+				sendErr = wErr
+			}
+			if !isTranscribe {
+				if wErr := writeJSON(liveClientContentMessage{
+					ClientContent: liveClientContentPayload{
+						TurnComplete: true,
+					},
+				}); wErr != nil && sendErr == nil {
+					sendErr = wErr
+				}
+			}
+		}
 
-	select {
-	case <-finalTurnCh:
-	case <-readerDoneCh:
-	case <-timer.C:
-	case <-ctx.Done():
-		return "", ctx.Err()
+		finalizeTimeout := c.FinalizeTimeout
+		if finalizeTimeout <= 0 {
+			finalizeTimeout = 5 * time.Second
+		}
+		gracePeriod := c.FinalizeGracePeriod
+		if gracePeriod <= 0 {
+			gracePeriod = 300 * time.Millisecond
+		}
+
+		timeoutTimer := time.NewTimer(finalizeTimeout)
+		defer timeoutTimer.Stop()
+
+		var graceTimer *time.Timer
+		var graceCh <-chan time.Time
+		armGrace := func() {
+			if graceTimer == nil {
+				graceTimer = time.NewTimer(gracePeriod)
+				graceCh = graceTimer.C
+				return
+			}
+			if !graceTimer.Stop() {
+				select {
+				case <-graceTimer.C:
+				default:
+				}
+			}
+			graceTimer.Reset(gracePeriod)
+			graceCh = graceTimer.C
+		}
+		defer func() {
+			if graceTimer != nil {
+				graceTimer.Stop()
+			}
+		}()
+
+		if alreadySettled {
+			armGrace()
+		}
+
+	waitLoop:
+		for {
+			select {
+			case <-finalDoneCh:
+				finalizedCleanly = true
+				break waitLoop
+			case <-readerDoneCh:
+				break waitLoop
+			case <-graceCh:
+				finalizedCleanly = true
+				break waitLoop
+			case <-graceTriggerCh:
+				armGrace()
+			case <-timeoutTimer.C:
+				break waitLoop
+			case <-ctx.Done():
+				return "", ctx.Err()
+			}
+		}
 	}
 
 	writeMu.Lock()
@@ -393,15 +650,20 @@ finalize:
 	closeConn()
 
 	textMu.Lock()
-	finalText := strings.TrimSpace(accText.String())
+	finalText := strings.TrimSpace(joinTranscriptSegments(committed, interim))
 	rErr := readerErr
+	sErr := apiErr
+	turnDoneCleanly := finalizedCleanly || (gotFinalAfterEnd && gotTurnDoneAfterEnd)
 	textMu.Unlock()
 
 	if finalText == "" {
+		if sErr != nil {
+			return "", sErr
+		}
 		if sendErr != nil {
 			return "", fmt.Errorf("audio streaming failed: %s", SanitizeError(sendErr, opts.APIKey))
 		}
-		if rErr != nil && !isExpectedWSClose(rErr) {
+		if rErr != nil && !isExpectedWSClose(rErr) && !turnDoneCleanly {
 			return "", fmt.Errorf("gemini live stream failed: %s", SanitizeError(rErr, opts.APIKey))
 		}
 	}

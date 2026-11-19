@@ -7,7 +7,7 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 ## Architecture
 
 - **Frontend (`addon/`)**: C++20 `fcitx::InputMethodEngineV2` plugin (`libgemini-voice.so`) communicating asynchronously over a Unix Domain Socket (`$XDG_RUNTIME_DIR/gemini-ime.sock`) using NDJSON and dispatching all UI updates to the Fcitx5 main loop via `EventDispatcher`.
-- **Backend & CLI (`daemon/`)**: Single Go binary (`gemini-voice-daemon` with CLI alias `gemini-voice`) that captures 16 kHz mono s16le PCM via PipeWire (`pw-record --raw`), streams audio to Gemini Live (`BidiGenerateContent`), detects silence via RMS VAD, concurrently prefetches post-processing actions via `generateContent` (with per-action model overrides), hot-reloads `config.toml` via `fsnotify`, and manages interactive setup, model routing, and TPM2 credentials.
+- **Backend & CLI (`daemon/`)**: Single Go binary (`gemini-voice-daemon` with CLI alias `gemini-voice`) that captures 16 kHz mono s16le PCM via PipeWire (`pw-record --raw`), streams audio over the Gemini Live API (`BidiGenerateContent`, defaulting to `gemini-3.5-transcribe-live` and configurable via `live_transcribe.model` / `gemini-voice models --live`), detects silence via RMS VAD, concurrently prefetches post-processing actions via `generateContent` (with per-action model overrides), hot-reloads `config.toml` via `fsnotify`, and manages interactive setup, model routing, and TPM2 credentials.
 - **Systemd & Config (`systemd/`)**: User service unit (`LoadCredentialEncrypted` with TPM2) and TOML configuration template.
 
 ## Prerequisites
@@ -67,9 +67,11 @@ gemini-voice config show
 gemini-voice config set ime.mode menu    # Show Refine / Translate / As Prompt menu (default)
 gemini-voice config set ime.mode direct  # Commit raw transcript immediately
 
-# Configure Fcitx5 trigger shortcut, language, VAD, prefetch, or proxy:
+# Configure Fcitx5 trigger shortcut, language, live transcription mode/vocabulary, VAD, prefetch, or proxy:
 gemini-voice config set ime.trigger_key Alt+space
-gemini-voice config set live.language zh-CN
+gemini-voice config set live.language auto          # auto (85+ languages), or comma-separated hints like cmn-Hans-CN,en-US (zh-CN aliases to cmn-Hans-CN)
+gemini-voice config set live.mode VERBATIM          # VERBATIM (literal) or SMART (disfluency cleanup)
+gemini-voice config set live.custom_vocabulary Fcitx5,PipeWire,Gemini
 gemini-voice config set live.vad_silence_ms 1200
 gemini-voice config set post_process.prefetch refine_fix_typos,refine_formal
 gemini-voice config set connection.proxy socks5://127.0.0.1:1080
@@ -135,7 +137,7 @@ GEMINI_API_KEY="your-key" ~/.local/bin/gemini-voice-daemon
 
 ## Daemon Configuration (`~/.config/gemini-voice/config.toml`)
 
-Prompts, live transcription model, default `post_process.model`, optional `[post_process.models]` per-action overrides, proxy (`http://`, `https://`, `socks5://`), language (`zh-CN`, `en-US`, `auto`), VAD silence timeout (`vad_silence_ms`), and `prefetch` actions live in `~/.config/gemini-voice/config.toml` and hot-reload automatically when saved.
+Prompts, live transcription model (defaults to `gemini-3.5-transcribe-live`), `mode` (`VERBATIM` or `SMART`), optional `custom_vocabulary`, default `post_process.model`, optional `[post_process.models]` per-action overrides, proxy (`http://`, `https://`, `socks5://`), language (defaults to `auto`, or comma-separated BCP-47 hints such as `cmn-Hans-CN,en-US`; `zh-CN` aliases to `cmn-Hans-CN`), VAD silence timeout (`vad_silence_ms`), and `prefetch` actions live in `~/.config/gemini-voice/config.toml` and hot-reload automatically when saved.
 
 ## Development
 

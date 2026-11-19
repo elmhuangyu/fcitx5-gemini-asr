@@ -302,13 +302,15 @@ func (cs *clientSession) handleStartRecording(reqLang string) {
 	cs.sendIfSession(sid, ServerEvent{Event: "state_changed", State: "recording"})
 
 	opts := LiveSessionOptions{
-		APIKey:       apiKey,
-		Proxy:        cfg.Connection.Proxy,
-		LiveWSURL:    cfg.Connection.LiveWSURL,
-		Model:        cfg.LiveTranscribe.Model,
-		Language:     lang,
-		VADSilenceMs: cfg.LiveTranscribe.VADSilenceMs,
-		VADThreshold: cfg.LiveTranscribe.VADThreshold,
+		APIKey:           apiKey,
+		Proxy:            cfg.Connection.Proxy,
+		LiveWSURL:        cfg.Connection.LiveWSURL,
+		Model:            cfg.LiveTranscribe.Model,
+		Language:         lang,
+		Mode:             cfg.LiveTranscribe.Mode,
+		CustomVocabulary: cfg.LiveTranscribe.CustomVocabulary,
+		VADSilenceMs:     cfg.LiveTranscribe.VADSilenceMs,
+		VADThreshold:     cfg.LiveTranscribe.VADThreshold,
 	}
 
 	cs.wg.Add(1)

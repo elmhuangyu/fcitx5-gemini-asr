@@ -44,6 +44,8 @@ func TestCLI_ConfigSetGetShow(t *testing.T) {
 		{"ime.trigger_key", "Alt+space,Super+v"},
 		{"live.model", "gemini-3.5-transcribe-live"},
 		{"live.language", "en-US"},
+		{"live.mode", "smart"},
+		{"live.custom_vocabulary", "Fcitx5, PipeWire, Gemini"},
 		{"live.vad_silence_ms", "800"},
 		{"post_process.model", "gemini-2.5-flash"},
 		{"model.refine_formal", "gemini-2.5-pro"},
@@ -66,16 +68,18 @@ func TestCLI_ConfigSetGetShow(t *testing.T) {
 
 	// Verify config get reads back expected values.
 	wantGet := map[string]string{
-		"ime.mode":              "direct",
-		"ime.show_action_menu":  "false",
-		"ime.trigger_key":       "Alt+space,Super+v",
-		"live.language":         "en-US",
-		"live.vad_silence_ms":   "800",
-		"model.refine_formal":   "gemini-2.5-pro",
-		"model.refine_casual":   "gemini-2.5-flash",
-		"post_process.prefetch": "refine_fix_typos,as_prompt",
-		"connection.proxy":      "socks5://127.0.0.1:1080",
-		"prompt.translate_en":   "Translate to formal UK English:",
+		"ime.mode":               "direct",
+		"ime.show_action_menu":   "false",
+		"ime.trigger_key":        "Alt+space,Super+v",
+		"live.language":          "en-US",
+		"live.mode":              "SMART",
+		"live.custom_vocabulary": "Fcitx5,PipeWire,Gemini",
+		"live.vad_silence_ms":    "800",
+		"model.refine_formal":    "gemini-2.5-pro",
+		"model.refine_casual":    "gemini-2.5-flash",
+		"post_process.prefetch":  "refine_fix_typos,as_prompt",
+		"connection.proxy":       "socks5://127.0.0.1:1080",
+		"prompt.translate_en":    "Translate to formal UK English:",
 	}
 	for k, want := range wantGet {
 		stdout.Reset()
@@ -104,12 +108,19 @@ func TestCLI_ConfigSetGetShow(t *testing.T) {
 	if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "post_process.prefetch", "none"}, deps); code != 0 {
 		t.Fatalf("clear prefetch failed: %s", stderr.String())
 	}
+	// Clearing custom_vocabulary with "none" persists empty slice after reloading TOML.
+	if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "live.custom_vocabulary", "none"}, deps); code != 0 {
+		t.Fatalf("clear custom_vocabulary failed: %s", stderr.String())
+	}
 	reloaded, err := LoadConfigFile(cfgPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(reloaded.PostProcess.Prefetch) != 0 {
 		t.Fatalf("expected empty prefetch after reload, got %#v", reloaded.PostProcess.Prefetch)
+	}
+	if len(reloaded.LiveTranscribe.CustomVocabulary) != 0 {
+		t.Fatalf("expected empty custom_vocabulary after reload, got %#v", reloaded.LiveTranscribe.CustomVocabulary)
 	}
 
 	// config show displays both Fcitx5 and daemon sections.
@@ -118,7 +129,7 @@ func TestCLI_ConfigSetGetShow(t *testing.T) {
 		t.Fatalf("config show failed: %s", stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "ime.mode:") || !strings.Contains(out, "model.as_prompt:") {
+	if !strings.Contains(out, "ime.mode:") || !strings.Contains(out, "live.mode:") || !strings.Contains(out, "live.custom_vocabulary:") || !strings.Contains(out, "model.as_prompt:") {
 		t.Fatalf("unexpected config show output:\n%s", out)
 	}
 
@@ -128,6 +139,8 @@ func TestCLI_ConfigSetGetShow(t *testing.T) {
 		{"connection.proxy", "ftp://bad"},
 		{"model.unknown_action", "gemini-2.5-pro"},
 		{"live.vad_silence_ms", "-5"},
+		{"live.mode", "invalid"},
+		{"live.mode", ""},
 	} {
 		if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, bad[0], bad[1]}, deps); code == 0 {
 			t.Fatalf("expected error for %s=%s", bad[0], bad[1])

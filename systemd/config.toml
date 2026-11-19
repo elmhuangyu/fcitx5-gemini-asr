@@ -5,7 +5,9 @@ proxy = ""
 
 [live_transcribe]
 model = "gemini-3.5-transcribe-live"
-language = "zh-CN" # Supported: "zh-CN", "en-US", "auto"
+language = "auto" # "auto" (85+ languages & code-switching), or comma-separated BCP-47 (e.g. "cmn-Hans-CN,en-US"; "zh-CN" aliases to "cmn-Hans-CN")
+mode = "VERBATIM"        # "VERBATIM" (literal) or "SMART" (disfluency cleanup & formatting)
+# custom_vocabulary = ["Fcitx5", "PipeWire", "Gemini"]
 vad_silence_ms = 1200
 
 [post_process]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -16,8 +17,11 @@ func TestConfigLoadSystemdTemplate(t *testing.T) {
 	if cfg.LiveTranscribe.Model != "gemini-3.5-transcribe-live" {
 		t.Fatalf("unexpected live model: %q", cfg.LiveTranscribe.Model)
 	}
-	if cfg.LiveTranscribe.Language != "zh-CN" {
+	if cfg.LiveTranscribe.Language != "auto" {
 		t.Fatalf("unexpected language: %q", cfg.LiveTranscribe.Language)
+	}
+	if cfg.LiveTranscribe.Mode != "VERBATIM" {
+		t.Fatalf("unexpected mode: %q", cfg.LiveTranscribe.Mode)
 	}
 	if cfg.LiveTranscribe.VADSilenceMs != 1200 {
 		t.Fatalf("unexpected vad_silence_ms: %d", cfg.LiveTranscribe.VADSilenceMs)
@@ -139,5 +143,51 @@ refine_formal = "direct write prompt"
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatalf("watcher returned error: %v", err)
+	}
+}
+
+func TestConfigLoad_ModeAndVocabularyValidation(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	content := `
+[live_transcribe]
+language = "zh-CN"
+mode = "smart"
+custom_vocabulary = [" Fcitx5 ", "", "PipeWire", "Fcitx5"]
+`
+	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadConfigFile(cfgPath)
+	if err != nil {
+		t.Fatalf("LoadConfigFile: %v", err)
+	}
+	if cfg.LiveTranscribe.Language != "zh-CN" {
+		t.Fatalf("expected legacy language preserved, got %q", cfg.LiveTranscribe.Language)
+	}
+	if got := NormalizeLanguageCodes(cfg.LiveTranscribe.Language); !reflect.DeepEqual(got, []string{"cmn-Hans-CN"}) {
+		t.Fatalf("NormalizeLanguageCodes(%q) = %#v", cfg.LiveTranscribe.Language, got)
+	}
+	if cfg.LiveTranscribe.Mode != "SMART" {
+		t.Fatalf("mode = %q, want SMART", cfg.LiveTranscribe.Mode)
+	}
+	wantVocab := []string{"Fcitx5", "PipeWire"}
+	if !reflect.DeepEqual(cfg.LiveTranscribe.CustomVocabulary, wantVocab) {
+		t.Fatalf("custom_vocabulary = %#v, want %#v", cfg.LiveTranscribe.CustomVocabulary, wantVocab)
+	}
+
+	cloned := cfg.Clone()
+	cloned.LiveTranscribe.CustomVocabulary[0] = "Mutated"
+	if cfg.LiveTranscribe.CustomVocabulary[0] != "Fcitx5" {
+		t.Fatalf("Clone() shared CustomVocabulary backing slice")
+	}
+
+	badPath := filepath.Join(dir, "bad.toml")
+	if err := os.WriteFile(badPath, []byte("[live_transcribe]\nmode = \"bogus\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadConfigFile(badPath); err == nil {
+		t.Fatal("expected error for invalid live_transcribe.mode")
 	}
 }
