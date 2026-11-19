@@ -1226,3 +1226,117 @@ func TestGeminiLiveClient_PreRollBuffersAudioDuringSlowConnect(t *testing.T) {
 		t.Fatalf("expected both pre-rolled chunks to be delivered, got %d payloads", len(gotAudioPayloads))
 	}
 }
+
+func TestGeminiLiveClient_VADAutoStopDrainsBufferedTailAudio(t *testing.T) {
+	// One speech chunk followed by silence: with VADSilenceMs=300 the VAD
+	// triggers on the 3rd silent chunk (4th overall), so the last two chunks
+	// are still sitting in the BufferedAudioSource queue and must be drained
+	// to the WebSocket before audioStreamEnd.
+	chunks := [][]byte{makePCMChunk(800, ChunkBytes)}
+	for i := 0; i < 5; i++ {
+		chunks = append(chunks, makePCMChunk(0, ChunkBytes))
+	}
+
+	var (
+		mu               sync.Mutex
+		gotAudioPayloads [][]byte
+		gotStreamEnd     bool
+		payloadsAtEnd    int
+	)
+
+	audio := newPreRollTestAudioSource(chunks)
+
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		_, _, err = conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		// Hold setupComplete until every chunk is already buffered, so the
+		// VAD trigger below deterministically leaves tail chunks queued.
+		<-audio.emittedCh
+		_ = conn.WriteJSON(map[string]any{"setupComplete": map[string]any{}})
+
+		for {
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var msg map[string]any
+			if err := json.Unmarshal(payload, &msg); err != nil {
+				continue
+			}
+			ri, ok := msg["realtimeInput"].(map[string]any)
+			if !ok {
+				continue
+			}
+			if audioObj, ok := ri["audio"].(map[string]any); ok {
+				dataStr, _ := audioObj["data"].(string)
+				decoded, decErr := base64.StdEncoding.DecodeString(dataStr)
+				if decErr == nil {
+					mu.Lock()
+					gotAudioPayloads = append(gotAudioPayloads, decoded)
+					mu.Unlock()
+				}
+			}
+			if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+				mu.Lock()
+				gotStreamEnd = true
+				payloadsAtEnd = len(gotAudioPayloads)
+				mu.Unlock()
+				_ = conn.WriteJSON(map[string]any{
+					"serverContent": map[string]any{
+						"inputTranscription": map[string]any{"text": "尾部音频已送达"},
+						"turnComplete":       true,
+					},
+				})
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	// stopCh never closes: the session must end via VAD auto-stop alone.
+	stopCh := make(chan struct{})
+
+	client := NewGeminiLiveClient()
+	client.FinalizeTimeout = 2 * time.Second
+	client.FinalizeGracePeriod = 100 * time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	finalText, err := client.Run(ctx, audio, stopCh, LiveSessionOptions{
+		APIKey:       "test-vad-tail-key",
+		LiveWSURL:    "ws" + strings.TrimPrefix(srv.URL, "http"),
+		Model:        "gemini-3.5-transcribe-live",
+		Mode:         "VERBATIM",
+		VADSilenceMs: 300,
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+	if finalText != "尾部音频已送达" {
+		t.Fatalf("finalText = %q, want %q", finalText, "尾部音频已送达")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !gotStreamEnd {
+		t.Fatal("expected audioStreamEnd to be sent after VAD auto-stop")
+	}
+	if payloadsAtEnd != len(chunks) {
+		t.Fatalf("audioStreamEnd arrived after %d payloads, want %d (buffered tail chunks must be drained first)", payloadsAtEnd, len(chunks))
+	}
+	for i, want := range chunks {
+		if i >= len(gotAudioPayloads) || !bytes.Equal(gotAudioPayloads[i], want) {
+			t.Fatalf("payload %d mismatch: got %d bytes, want %d bytes", i, len(gotAudioPayloads[i]), len(want))
+		}
+	}
+}

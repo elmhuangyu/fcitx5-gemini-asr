@@ -517,8 +517,9 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 	}
 	vad := NewVADDetector(vadThreshold, opts.VADSilenceMs)
 	var (
-		sendErr   error
-		sentAudio bool
+		sendErr      error
+		sentAudio    bool
+		vadTriggered bool
 	)
 
 	for {
@@ -554,8 +555,13 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 				speechSinceLastFinal = true
 				textMu.Unlock()
 			}
-			if vad.Feed(chunk) {
-				break
+			if !vadTriggered && vad.Feed(chunk) {
+				// VAD silence auto-stop: stop capturing new audio but keep
+				// looping so chunks already buffered are drained to the
+				// WebSocket before audioStreamEnd, matching the explicit
+				// stop (stopCh) path.
+				vadTriggered = true
+				bufferedAudio.StopCapture()
 			}
 		}
 		if err != nil {
