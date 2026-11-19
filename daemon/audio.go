@@ -9,7 +9,6 @@ import (
 	"io"
 	"math"
 	"os/exec"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -219,7 +218,7 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 func (b *boundedBuffer) String() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return strings.TrimSpace(string(bytes.TrimSpace(b.buf)))
+	return string(bytes.TrimSpace(b.buf))
 }
 
 type PipeWireCapture struct {
