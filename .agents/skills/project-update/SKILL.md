@@ -48,6 +48,8 @@ Inspect `.github/workflows/ci.yml` and `.github/dependabot.yml`.
    - `GOIMPORTS_VERSION` (`golang.org/x/tools/cmd/goimports@...`)
    - `GOLANGCI_LINT_VERSION` (verify compatibility with `.golangci.yml` when
      bumping major versions)
+   - `FCITX5_VERSION` (fcitx5 tag the `addon` job builds from source; see
+     "C++ addon CI toolchain" below for the bump procedure)
 2. **GitHub Action versions** (`.github/workflows/ci.yml`):
    - `actions/checkout` (used in both `daemon` and `addon` jobs — update all
      occurrences together)
@@ -65,13 +67,33 @@ Inspect `.github/workflows/ci.yml` and `.github/dependabot.yml`.
    - Match the existing reference style in `.github/workflows/ci.yml` (major
      version tag such as `@v7`, or if pinned by commit SHA, update both the SHA
      and `# vX.Y.Z` comment together).
-3. **C++ addon CI packages** (`.github/workflows/ci.yml` `addon` job):
-   - `addon/` depends on system `apt` packages on `ubuntu-latest` (`cmake`,
-     `g++`, `pkg-config`, `clang-format`, `libfcitx5core-dev`,
-     `libfcitx5config-dev`, `libfcitx5utils-dev`) with no lockfile.
+3. **C++ addon CI toolchain** (`.github/workflows/ci.yml` `addon` job):
+   - `ubuntu-latest` (26.04) ships fcitx5 5.1.19 in apt, which is older than
+     the APIs the addon and its integration tests require
+     (`Instance::showCustomInputMethodInformation` needs 5.1.11;
+     `InputPanel::overlayMessage` in `addon/tests/` needs 5.1.22). CI must
+     therefore **not** install the distro `libfcitx5*-dev` packages.
+   - Instead, the "Build and install fcitx5 core" step clones
+     `fcitx/fcitx5` at `env.FCITX5_VERSION` and builds it from source as an
+     embedded library (all optional features off: `ENABLE_SERVER`, `ENABLE_DBUS`,
+     `ENABLE_X11`, `ENABLE_WAYLAND`, `ENABLE_KEYBOARD`, `ENABLE_ENCHANT`,
+     `ENABLE_EMOJI`, `BUILD_SPELL_DICT` — see the workflow for the full flag
+     set), then installs to `/usr` and runs `sudo ldconfig`.
+   - The remaining `apt` packages for the job (`cmake`, `g++`, `make`,
+     `pkg-config`, `clang-format`, `gettext`, `extra-cmake-modules`,
+     `libuv1-dev`, `uuid-dev`, `git`) cover the toolchain plus fcitx5's own
+     build dependencies (event loop via libuv, ECM, uuid); there is no
+     lockfile.
+   - Bumping fcitx5:
+     ```bash
+     gh api repos/fcitx/fcitx5/releases/latest --jq .tag_name
+     ```
+     Update `FCITX5_VERSION` in `.github/workflows/ci.yml` `env:`. Keep it
+     >= the minimum version the addon builds against (currently 5.1.22) and
+     in sync with `README.md` (`## Prerequisites`).
    - If `addon/CMakeLists.txt` or `README.md` (`## Prerequisites`) changes
-     required build tools or libraries, keep the CI `apt-get install` list in
-     sync.
+     required build tools or libraries, keep both the CI `apt-get install`
+     list and the fcitx5 source-build flags in sync.
 
 ## 3. Verification
 
