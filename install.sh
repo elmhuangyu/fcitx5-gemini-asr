@@ -110,7 +110,7 @@ cat <<'EOF'
 
 Installation complete! Next steps:
 
-1. Initialize configuration and encrypt your Gemini API key with TPM2:
+1. Initialize configuration and encrypt your Gemini API key:
    gemini-voice init
    (Or update only the key later with: gemini-voice auth set)
 

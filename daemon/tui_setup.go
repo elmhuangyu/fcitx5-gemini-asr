@@ -108,7 +108,7 @@ func validateNonEmpty(label string) func(string) error {
 func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 	withKey := strings.TrimSpace(opts.WithKey)
 	if withKey == "" {
-		withKey = "tpm2"
+		withKey = "auto"
 	}
 
 	groups := []*huh.Group{

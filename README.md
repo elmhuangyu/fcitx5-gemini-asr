@@ -2,13 +2,13 @@
 
 [![CI](https://github.com/elmhuangyu/fcitx5-gemini-asr/actions/workflows/ci.yml/badge.svg)](https://github.com/elmhuangyu/fcitx5-gemini-asr/actions/workflows/ci.yml)
 
-Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API**, featuring streaming inline preedit, a two-level Rime-style LLM candidate action menu with background prefetching, per-action model routing, and silent TPM2 credential storage.
+Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API**, featuring streaming inline preedit, a two-level Rime-style LLM candidate action menu with background prefetching, per-action model routing, and silent `systemd-creds` user credential storage.
 
 ## Architecture
 
 - **Frontend (`addon/`)**: C++20 `fcitx::InputMethodEngineV2` plugin (`libgemini-voice.so`) communicating asynchronously over a Unix Domain Socket (`$XDG_RUNTIME_DIR/gemini-ime.sock`) using NDJSON and dispatching all UI updates to the Fcitx5 main loop via `EventDispatcher`.
-- **Backend & CLI (`daemon/`)**: Single Go binary (`gemini-voice-daemon` with CLI alias `gemini-voice`) that captures 16 kHz mono s16le PCM via PipeWire (`pw-record --raw`), streams audio over the Gemini Live API (`BidiGenerateContent`, defaulting to `gemini-3.5-transcribe-live` and configurable via `live_transcribe.model` / `gemini-voice models --live`), detects silence via RMS VAD, concurrently prefetches post-processing actions via `generateContent` (with per-action model overrides), hot-reloads `config.toml` via `fsnotify`, and provides an interactive TUI setup form, model routing, and TPM2 credential management.
-- **Systemd & Config (`systemd/`)**: User service unit (`LoadCredentialEncrypted` with TPM2) and TOML configuration template.
+- **Backend & CLI (`daemon/`)**: Single Go binary (`gemini-voice-daemon` with CLI alias `gemini-voice`) that captures 16 kHz mono s16le PCM via PipeWire (`pw-record --raw`), streams audio over the Gemini Live API (`BidiGenerateContent`, defaulting to `gemini-3.5-transcribe-live` and configurable via `live_transcribe.model` / `gemini-voice models --live`), detects silence via RMS VAD, concurrently prefetches post-processing actions via `generateContent` (with per-action model overrides), hot-reloads `config.toml` via `fsnotify`, and provides an interactive TUI setup form, model routing, and `systemd-creds` credential management.
+- **Systemd & Config (`systemd/`)**: User service unit (`LoadCredentialEncrypted`) and TOML configuration template.
 
 ## Prerequisites
 
@@ -16,7 +16,7 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 - **C++20** compiler (`g++` or `clang++`), `cmake`, `pkg-config`
 - **Go** (>= 1.27.4, matching `daemon/go.mod`)
 - **PipeWire** (`pw-record`)
-- **systemd** (`systemd-creds` with TPM2; falls back to `GEMINI_API_KEY` env var when `CREDENTIALS_DIRECTORY` is unset)
+- **systemd** (`systemd-creds --user`; falls back to `GEMINI_API_KEY` env var when `CREDENTIALS_DIRECTORY` is unset)
 - Optional build & dev tooling: `gettext` (`msgfmt`, for compiling UI translations in `addon/`), `just`, `golangci-lint`, `goimports`, `clang-format`
 
 ## Build & Install
@@ -58,14 +58,14 @@ Both `gemini-voice init` and `gemini-voice configure` launch an interactive mult
 - **TUI keybindings**: `↑`/`↓` (`Shift+Tab`/`Tab`/`Enter`) move between options and fields, `←`/`→` edit text cursors or toggle Yes/No confirmations, `Space`/`x` toggle multi-select checkboxes, `Ctrl+E` accepts autocomplete suggestions, and `Ctrl+C` cancels without saving any changes.
 
 ```bash
-# Full interactive TUI setup (config, Fcitx5 addon settings, and encrypted TPM2 API key):
+# Full interactive TUI setup (config, Fcitx5 addon settings, and encrypted API key):
 gemini-voice init
 
 # Initialize and immediately enable/start the systemd user service:
 gemini-voice init --enable-service
 
-# Fall back to host/auto key encryption if TPM2 is unavailable:
-gemini-voice init --with-key auto
+# Explicitly select the host key for user-scoped encryption (default is auto):
+gemini-voice init --with-key host
 
 # Scripted / non-interactive initialization (skips TUI, writes default config.toml if missing):
 printf '%s' "$MY_KEY" | gemini-voice init --stdin --non-interactive
@@ -121,13 +121,13 @@ gemini-voice auth set --restart
 gemini-voice auth set --key-file /path/to/key.txt
 printf '%s' "$MY_KEY" | gemini-voice auth set --stdin
 
-# If TPM2 is unavailable in a VM or container, fall back to auto or host key:
-gemini-voice auth set --with-key auto
+# Explicitly select host key encryption (default is auto):
+gemini-voice auth set --with-key host
 
 # Verify decryption (prints masked fingerprint only, never the raw key):
 gemini-voice auth verify
 
-# Inspect full system diagnostics (config, credential, TPM2, PipeWire, socket, systemd):
+# Inspect full system diagnostics (config, credential, PipeWire, socket, systemd):
 gemini-voice status
 
 # Remove stored encrypted credential:
@@ -173,7 +173,7 @@ Common recipes defined in `Justfile`:
 ## Troubleshooting
 
 - **Daemon connection error**: Run `gemini-voice status` or `systemctl --user status gemini-voice.service` and confirm `$XDG_RUNTIME_DIR/gemini-ime.sock` exists (`0600`).
-- **Credential decryption failure**: Run `gemini-voice auth verify`; if `CREDENTIALS_DIRECTORY` is set by systemd, the encrypted credential file must exist and match the active TPM2/host scope.
+- **Credential decryption failure**: Run `gemini-voice auth verify`; if `CREDENTIALS_DIRECTORY` is set by systemd, the encrypted credential file must exist and match the active host/user scope.
 - **No audio captured**: Verify `pw-record --raw --rate=16000 --channels=1 --format=s16 - > /dev/null` works with your PipeWire microphone source.
 
 ## License

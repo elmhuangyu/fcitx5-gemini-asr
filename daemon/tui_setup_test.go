@@ -81,7 +81,7 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	fcitxCfg := DefaultFcitxAddonConfig()
 	opts := setupFormOptions{
 		IncludeAPIKey: true,
-		WithKey:       "tpm2",
+		WithKey:       "auto",
 		CredExists:    false,
 	}
 	state := newSetupFormState(cfg, fcitxCfg, opts)
@@ -219,7 +219,7 @@ func TestBuildSetupForm_ConditionalHiddenGroupsAndAbort(t *testing.T) {
 		fcitxCfg := DefaultFcitxAddonConfig()
 		opts := setupFormOptions{
 			IncludeAPIKey: true,
-			WithKey:       "tpm2",
+			WithKey:       "auto",
 			CredPath:      "/tmp/test.cred",
 			CredExists:    true,
 		}

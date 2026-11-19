@@ -160,7 +160,7 @@ Commands:
   auth verify         Verify encrypted credential can be decrypted (alias: verify-key)
   auth status         Show credential status
   auth remove         Delete encrypted credential file (alias: remove-key)
-  status              Show full system diagnostics (config, credential, TPM2, PipeWire, daemon)
+  status              Show full system diagnostics (config, credential, PipeWire, daemon)
   serve               Run the background Unix socket daemon
   version             Print version information
   help                Show this help message
@@ -232,10 +232,10 @@ func loadConfigOrDefault(configPath string) (Config, error) {
 
 func validateWithKeyOption(withKey string) error {
 	switch withKey {
-	case "tpm2", "auto", "host", "host+tpm2":
+	case "auto", "host":
 		return nil
 	default:
-		return fmt.Errorf("unsupported --with-key %q (must be one of: tpm2, auto, host, host+tpm2)", withKey)
+		return fmt.Errorf("unsupported --with-key %q in --user mode (must be one of: auto, host)", withKey)
 	}
 }
 
@@ -384,11 +384,7 @@ func encryptAndSaveCredential(opts authSetOptions, deps cliDeps) error {
 		if errDetail != "" {
 			errDetail = ": " + errDetail
 		}
-		hint := ""
-		if opts.withKey == "tpm2" {
-			hint = " (hint: if TPM2 is unavailable in this environment, retry with --with-key=auto or --with-key=host)"
-		}
-		return fmt.Errorf("systemd-creds encrypt failed (%w)%s%s", res.err, errDetail, hint)
+		return fmt.Errorf("systemd-creds encrypt failed (%w)%s", res.err, errDetail)
 	}
 
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
@@ -454,7 +450,7 @@ func cmdAuthSet(args []string, deps cliDeps) int {
 	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
 	outputPath := fs.String("output", "", "Path to output .cred file (defaults to <config_dir>/<credential_name>.cred)")
 	credName := fs.String("name", "", "Credential name override (defaults to config credential_name)")
-	withKey := fs.String("with-key", "tpm2", "Encryption key type: tpm2, auto, host, host+tpm2")
+	withKey := fs.String("with-key", "auto", "Encryption key type for systemd-creds --user: auto, host")
 	useStdin := fs.Bool("stdin", false, "Read API key from standard input")
 	keyFile := fs.String("key-file", "", "Read API key from file")
 	noVerify := fs.Bool("no-verify", false, "Skip decrypt verification after encryption")
@@ -652,14 +648,7 @@ func printAuthDiagnostics(configPath, credPathOverride string, deps cliDeps) {
 	_, _ = fmt.Fprintf(deps.stdout, "Credential file:  %s [%s] (name=%s)\n", credPath, credStatus, credName)
 
 	if p, lpErr := deps.lookPath("systemd-creds"); lpErr == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		tpmRes := deps.runCmd(ctx, "", "systemd-creds", "has-tpm2", "--quiet")
-		tpmStatus := "unavailable"
-		if tpmRes.err == nil {
-			tpmStatus = "available"
-		}
-		_, _ = fmt.Fprintf(deps.stdout, "systemd-creds:    %s (TPM2: %s)\n", p, tpmStatus)
+		_, _ = fmt.Fprintf(deps.stdout, "systemd-creds:    %s\n", p)
 	} else {
 		_, _ = fmt.Fprintln(deps.stdout, "systemd-creds:    missing")
 	}
@@ -680,7 +669,7 @@ func cmdInit(args []string, deps cliDeps) int {
 	fs.SetOutput(deps.stderr)
 	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
 	fcitxPath := fs.String("fcitx-config", DefaultFcitxConfigPath(), "Path to Fcitx5 gemini-voice.conf")
-	withKey := fs.String("with-key", "tpm2", "Encryption key type: tpm2, auto, host, host+tpm2")
+	withKey := fs.String("with-key", "auto", "Encryption key type for systemd-creds --user: auto, host")
 	force := fs.Bool("force", false, "Overwrite existing config.toml in non-interactive mode")
 	enableSvc := fs.Bool("enable-service", false, "Enable and start gemini-voice.service after initialization")
 	useStdin := fs.Bool("stdin", false, "Read API key from standard input")

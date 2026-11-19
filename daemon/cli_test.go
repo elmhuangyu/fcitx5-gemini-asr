@@ -148,18 +148,18 @@ func TestCLI_AuthSetErrorsAndTempCleanup(t *testing.T) {
 		t.Fatal("expected failure for empty API key")
 	}
 
-	// TPM2 failure prints hint and cleans up temp file
+	// Encryption failure prints error detail and cleans up temp file
 	stdout.Reset()
 	stderr.Reset()
 	deps.stdin = strings.NewReader("AIzaSyValidKey12345")
 	deps.runCmd = func(context.Context, string, string, ...string) cmdResult {
-		return cmdResult{stderr: "No TPM2 device found", err: errors.New("exit status 1")}
+		return cmdResult{stderr: "systemd-creds error", err: errors.New("exit status 1")}
 	}
 	if code := runCLI("gemini-voice", []string{"auth", "set", "--config", cfgPath, "--stdin"}, deps); code == 0 {
 		t.Fatal("expected failure when systemd-creds fails")
 	}
-	if !strings.Contains(stderr.String(), "--with-key=auto") {
-		t.Fatalf("expected TPM2 fallback hint in stderr: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "systemd-creds error") {
+		t.Fatalf("expected systemd-creds error detail in stderr: %s", stderr.String())
 	}
 	entries, err := os.ReadDir(cfgDir)
 	if err != nil {
@@ -231,7 +231,7 @@ func TestCLI_InitStatusAndDaemonDispatch(t *testing.T) {
 	if code := runCLI("gemini-voice", []string{"status", "--config", cfgPath, "--socket", sockPath}, deps); code != 0 {
 		t.Fatalf("status exit=%d stderr=%s", code, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "TPM2: available") {
+	if !strings.Contains(stdout.String(), "systemd-creds:    /usr/bin/systemd-creds") {
 		t.Fatalf("unexpected status output:\n%s", stdout.String())
 	}
 
