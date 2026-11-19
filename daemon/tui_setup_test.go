@@ -330,8 +330,10 @@ func TestApplySetupFormState_DisableOverridesClearsStaleModels(t *testing.T) {
 		// Group 2: keep liveModel and postProcessModel, then toggle Confirm overrides from Yes to No via Right.
 		form = pressSpecial(form, tea.KeyEnter)
 		form = pressSpecial(form, tea.KeyEnter)
+		// Assert a short, stable fragment of the Confirm description so the
+		// check does not depend on huh's rendering width (long lines truncate).
 		normalizedView := strings.Join(strings.Fields(strings.ReplaceAll(ansi.Strip(form.View()), "┃", " ")), " ")
-		if !strings.Contains(normalizedView, "No to inherit the default model for all actions.") {
+		if !strings.Contains(normalizedView, "set per-action models") {
 			t.Fatalf("expected updated Confirm description in view:\n%s", ansi.Strip(form.View()))
 		}
 		form = pressSpecial(form, tea.KeyRight)

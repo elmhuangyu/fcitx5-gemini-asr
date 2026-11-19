@@ -168,7 +168,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 
 			huh.NewConfirm().
 				Title("Configure per-action model overrides?").
-				Description("Use ←/→ to toggle; choose Yes to set custom models, or No to inherit the default model for all actions.").
+				Description("Yes: set per-action models. No: inherit the default model.").
 				Affirmative("Yes").
 				Negative("No").
 				Value(&state.configureOverrides),
