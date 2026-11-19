@@ -170,3 +170,33 @@ func TestPostProcessor_PerActionModelOverride(t *testing.T) {
 		t.Fatalf("refine_fix_typos hit %q", paths[1])
 	}
 }
+
+func TestPostProcessor_HTTP200ErrorSanitized(t *testing.T) {
+	const secret = "super-secret-postprocess-key"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{
+				"code":    400,
+				"status":  "INVALID_ARGUMENT",
+				"message": "request to https://example.com/v1beta?key=leaked-query-secret failed for key " + secret,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	cfg := DefaultConfig()
+	cfg.Connection.APIBaseURL = srv.URL
+
+	pp := NewPostProcessor()
+	_, err := pp.Generate(context.Background(), cfg, secret, "refine_fix_typos", "hello world")
+	if err == nil {
+		t.Fatal("expected error for HTTP 200 JSON error body")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "leaked-query-secret") {
+		t.Fatalf("error leaked secret: %v", err)
+	}
+	if !strings.Contains(err.Error(), "REDACTED") {
+		t.Fatalf("expected REDACTED in sanitized error, got %v", err)
+	}
+}

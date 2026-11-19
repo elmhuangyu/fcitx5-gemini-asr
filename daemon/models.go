@@ -7,10 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
 )
+
+const maxModelListPages = 50
 
 type RemoteModelInfo struct {
 	Name             string
@@ -25,11 +28,60 @@ type listModelsResponse struct {
 		DisplayName                string   `json:"displayName"`
 		SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
 	} `json:"models"`
-	Error *struct {
+	NextPageToken string `json:"nextPageToken"`
+	Error         *struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 		Status  string `json:"status"`
 	} `json:"error"`
+}
+
+func fetchModelsPage(ctx context.Context, client *http.Client, baseURL, pageToken, apiKey string) (listModelsResponse, error) {
+	u, err := url.Parse(baseURL + "/v1beta/models")
+	if err != nil {
+		return listModelsResponse{}, fmt.Errorf("parse models URL: %s", SanitizeError(err, apiKey))
+	}
+	q := u.Query()
+	q.Set("pageSize", "200")
+	if pageToken != "" {
+		q.Set("pageToken", pageToken)
+	}
+	u.RawQuery = q.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return listModelsResponse{}, fmt.Errorf("build models request: %s", SanitizeError(err, apiKey))
+	}
+	req.Header.Set("x-goog-api-key", apiKey)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return listModelsResponse{}, fmt.Errorf("list models HTTP request failed: %s", SanitizeError(err, apiKey))
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return listModelsResponse{}, fmt.Errorf("read models response: %s", SanitizeError(err, apiKey))
+	}
+
+	var parsed listModelsResponse
+	unmarshalErr := json.Unmarshal(body, &parsed)
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if unmarshalErr == nil && parsed.Error != nil && parsed.Error.Message != "" {
+			return listModelsResponse{}, errors.New(SanitizeError(fmt.Errorf("gemini API error (%d %s): %s", resp.StatusCode, parsed.Error.Status, parsed.Error.Message), apiKey))
+		}
+		return listModelsResponse{}, fmt.Errorf("gemini API HTTP %d: %s", resp.StatusCode, SanitizeError(errors.New(strings.TrimSpace(string(body))), apiKey))
+	}
+
+	if unmarshalErr != nil {
+		return listModelsResponse{}, fmt.Errorf("decode models response: %s", SanitizeError(unmarshalErr, apiKey))
+	}
+	if parsed.Error != nil && parsed.Error.Message != "" {
+		return listModelsResponse{}, errors.New(SanitizeError(fmt.Errorf("gemini API error (%d %s): %s", parsed.Error.Code, parsed.Error.Status, parsed.Error.Message), apiKey))
+	}
+	return parsed, nil
 }
 
 // ListRemoteModels queries Gemini /v1beta/models and returns Gemini models supporting Live or generateContent.
@@ -38,64 +90,62 @@ func ListRemoteModels(ctx context.Context, cfg Config, apiKey string) ([]RemoteM
 	if baseURL == "" {
 		baseURL = DefaultAPIBaseURL
 	}
-	endpoint := fmt.Sprintf("%s/v1beta/models?pageSize=200", baseURL)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build models request: %s", SanitizeError(err, apiKey))
-	}
-	req.Header.Set("x-goog-api-key", apiKey)
 
 	client, err := BuildHTTPClient(cfg.Connection.Proxy, 20*time.Second)
 	if err != nil {
 		return nil, err
 	}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("list models HTTP request failed: %s", SanitizeError(err, apiKey))
-	}
-	defer func() { _ = resp.Body.Close() }()
+	var (
+		models     []RemoteModelInfo
+		pageToken  string
+		seenTokens = make(map[string]struct{})
+		seenModels = make(map[string]struct{})
+	)
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read models response: %s", SanitizeError(err, apiKey))
-	}
-
-	var parsed listModelsResponse
-	_ = json.Unmarshal(body, &parsed)
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if parsed.Error != nil && parsed.Error.Message != "" {
-			return nil, fmt.Errorf("gemini API error (%d %s): %s", resp.StatusCode, parsed.Error.Status, SanitizeError(errors.New(parsed.Error.Message), apiKey))
+	for page := 0; page < maxModelListPages; page++ {
+		parsed, err := fetchModelsPage(ctx, client, baseURL, pageToken, apiKey)
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("gemini API HTTP %d: %s", resp.StatusCode, SanitizeError(errors.New(strings.TrimSpace(string(body))), apiKey))
-	}
 
-	var models []RemoteModelInfo
-	for _, m := range parsed.Models {
-		shortName := strings.TrimPrefix(m.Name, "models/")
-		if !strings.Contains(strings.ToLower(shortName), "gemini") {
-			continue
-		}
-		var live, gen bool
-		for _, method := range m.SupportedGenerationMethods {
-			switch method {
-			case "bidiGenerateContent":
-				live = true
-			case "generateContent":
-				gen = true
+		for _, m := range parsed.Models {
+			shortName := strings.TrimPrefix(m.Name, "models/")
+			if !strings.Contains(strings.ToLower(shortName), "gemini") {
+				continue
 			}
+			var live, gen bool
+			for _, method := range m.SupportedGenerationMethods {
+				switch method {
+				case "bidiGenerateContent":
+					live = true
+				case "generateContent":
+					gen = true
+				}
+			}
+			if !live && !gen {
+				continue
+			}
+			if _, dup := seenModels[shortName]; dup {
+				continue
+			}
+			seenModels[shortName] = struct{}{}
+			models = append(models, RemoteModelInfo{
+				Name:             shortName,
+				DisplayName:      m.DisplayName,
+				SupportsLive:     live,
+				SupportsGenerate: gen,
+			})
 		}
-		if !live && !gen {
-			continue
+
+		if parsed.NextPageToken == "" {
+			break
 		}
-		models = append(models, RemoteModelInfo{
-			Name:             shortName,
-			DisplayName:      m.DisplayName,
-			SupportsLive:     live,
-			SupportsGenerate: gen,
-		})
+		if _, seen := seenTokens[parsed.NextPageToken]; seen {
+			break
+		}
+		seenTokens[parsed.NextPageToken] = struct{}{}
+		pageToken = parsed.NextPageToken
 	}
 
 	sort.Slice(models, func(i, j int) bool {

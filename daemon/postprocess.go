@@ -147,7 +147,7 @@ func (p *PostProcessor) Generate(ctx context.Context, cfg Config, apiKey, action
 	}
 
 	if parsed.Error != nil && parsed.Error.Message != "" {
-		return "", fmt.Errorf("gemini API error (%d %s): %s", parsed.Error.Code, parsed.Error.Status, parsed.Error.Message)
+		return "", errors.New(SanitizeError(fmt.Errorf("gemini API error (%d %s): %s", parsed.Error.Code, parsed.Error.Status, parsed.Error.Message), apiKey))
 	}
 	if len(parsed.Candidates) == 0 {
 		return "", errors.New("gemini API returned no candidates")

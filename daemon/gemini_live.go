@@ -237,7 +237,7 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 	}
 	u, err := url.Parse(rawWSURL)
 	if err != nil {
-		return "", fmt.Errorf("invalid Live WebSocket URL %q: %w", RedactURL(rawWSURL), err)
+		return "", fmt.Errorf("invalid Live WebSocket URL %q: %s", RedactURL(rawWSURL), SanitizeError(err, opts.APIKey))
 	}
 	q := u.Query()
 	q.Set("key", opts.APIKey)
@@ -349,7 +349,7 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 			continue
 		}
 		if msg.Error != nil {
-			return "", fmt.Errorf("gemini live error (%d %s): %s", msg.Error.Code, msg.Error.Status, msg.Error.Message)
+			return "", errors.New(SanitizeError(fmt.Errorf("gemini live error (%d %s): %s", msg.Error.Code, msg.Error.Status, msg.Error.Message), opts.APIKey))
 		}
 		if len(msg.SetupComplete) > 0 {
 			break
@@ -390,7 +390,7 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 			}
 			if msg.Error != nil {
 				textMu.Lock()
-				apiErr = fmt.Errorf("gemini live error (%d %s): %s", msg.Error.Code, msg.Error.Status, msg.Error.Message)
+				apiErr = errors.New(SanitizeError(fmt.Errorf("gemini live error (%d %s): %s", msg.Error.Code, msg.Error.Status, msg.Error.Message), opts.APIKey))
 				textMu.Unlock()
 				return
 			}
