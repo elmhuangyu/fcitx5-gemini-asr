@@ -9,6 +9,10 @@
 
 #include <fcitx-config/configuration.h>
 #include <fcitx-config/option.h>
+#ifndef FCITX_GETTEXT_DOMAIN
+#define FCITX_GETTEXT_DOMAIN "fcitx5-gemini-voice"
+#endif
+#include <fcitx-utils/i18n.h>
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/trackableobject.h>
 #include <fcitx/addoninstance.h>
@@ -23,17 +27,17 @@ FCITX_CONFIGURATION(
     fcitx::KeyListOption triggerKey{
         this,
         "TriggerKey",
-        "Trigger Key",
+        _("Trigger Key"),
         {fcitx::Key("Alt+space")},
         fcitx::KeyListConstrain({fcitx::KeyConstrainFlag::AllowModifierLess,
                                  fcitx::KeyConstrainFlag::AllowModifierOnly})};
     fcitx::Option<bool> showActionMenu{this, "ShowActionMenu",
-                                       "Show LLM Action Menu", true};
+                                       _("Show LLM Action Menu"), true};
     fcitx::Option<std::string> socketPath{this, "SocketPath",
-                                          "Daemon Unix Socket Path",
+                                          _("Daemon Unix Socket Path"),
                                           "$XDG_RUNTIME_DIR/gemini-ime.sock"};
     fcitx::Option<std::string> language{this, "Language",
-                                        "Transcription Language", ""};);
+                                        _("Transcription Language"), ""};);
 
 class GeminiVoiceEngine : public fcitx::InputMethodEngineV2 {
 public:

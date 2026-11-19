@@ -274,6 +274,9 @@ void sendKey(fcitx::InputMethodEngine *engine,
 } // namespace
 
 int main() {
+    ::setenv("LC_ALL", "C", 1);
+    ::setenv("LANGUAGE", "C", 1);
+
     char tmpl[] = "/tmp/fcitx5-gemini-test-XXXXXX";
     char *tmpDirPtr = ::mkdtemp(tmpl);
     REQUIRE(tmpDirPtr != nullptr);
@@ -314,6 +317,7 @@ int main() {
     char arg2[] = "--enable=gemini-voice";
     char *argv[] = {arg0, arg1, arg2};
 
+    std::shared_ptr<fcitx::CandidateList> staleList;
     {
         fcitx::Instance instance(3, argv);
         instance.addonManager().registerDefaultLoader(nullptr);
@@ -352,7 +356,7 @@ int main() {
                 REQUIRE(cmd && (*cmd)["cmd"] == "start_recording");
                 runOnMain(instance, [&]() {
                     REQUIRE(ic->inputPanel().clientPreedit().toString() ==
-                            "[录音中...]");
+                            "[Recording...]");
                 });
             }
 
@@ -438,7 +442,7 @@ int main() {
                         (*cmd)["action"] == "refine_formal");
                 runOnMain(instance, [&]() {
                     REQUIRE(ic->inputPanel().preedit().toString() ==
-                            "[AI 处理中...]");
+                            "[AI Processing...]");
                 });
             }
 
@@ -532,8 +536,30 @@ int main() {
                 R"({"event":"transcribe_done","raw_text":"直接上屏"})");
             REQUIRE(waitOnMain(instance,
                                [&]() { return ic->committed.size() == 4; }));
+            runOnMain(instance,
+                      [&]() { REQUIRE(ic->committed[3] == "直接上屏"); });
+
+            // 8. Unload safety: capture CandidateList before engine teardown
             runOnMain(instance, [&]() {
-                REQUIRE(ic->committed[3] == "直接上屏");
+                fcitx::RawConfig rawCfg;
+                rawCfg.setValueByPath("ShowActionMenu", "True");
+                addon->setConfig(rawCfg);
+                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            runOnMain(instance, [&]() {
+                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Return));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            daemon.sendEvent(
+                R"({"event":"transcribe_done","raw_text":"卸载安全测试"})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                auto cl = ic->inputPanel().candidateList();
+                return cl && cl->size() == 4;
+            }));
+            runOnMain(instance, [&]() {
+                staleList = ic->inputPanel().candidateList();
+                REQUIRE(staleList != nullptr);
                 ic.reset();
                 instance.exit();
             });
@@ -542,6 +568,13 @@ int main() {
         instance.eventLoop().exec();
         driver.join();
     }
+
+    REQUIRE(staleList != nullptr);
+    staleList->candidate(0).select(nullptr);
+    staleList->candidate(1).select(nullptr);
+    staleList->candidate(2).select(nullptr);
+    staleList->candidate(3).select(nullptr);
+    staleList.reset();
 
     daemon.stop();
     std::error_code ec;

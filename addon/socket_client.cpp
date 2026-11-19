@@ -16,10 +16,11 @@ constexpr size_t kMaxLineBytes = 4 * 1024 * 1024;
 } // namespace
 
 SocketClient::SocketClient(std::string socketPath, MessageCallback onMessage,
-                           DisconnectCallback onDisconnect)
+                           DisconnectCallback onDisconnect,
+                           bool enableWakeupPipe)
     : onMessage_(std::move(onMessage)), onDisconnect_(std::move(onDisconnect)),
       socketPath_(std::move(socketPath)) {
-    if (::pipe2(wakeupFds_, O_CLOEXEC | O_NONBLOCK) != 0) {
+    if (enableWakeupPipe && ::pipe2(wakeupFds_, O_CLOEXEC | O_NONBLOCK) != 0) {
         wakeupFds_[0] = -1;
         wakeupFds_[1] = -1;
     }
@@ -290,12 +291,18 @@ void SocketClient::readerLoop() {
             ++nfds;
         }
 
-        int rc = ::poll(pfds, nfds, -1);
+        constexpr int kFallbackPollTimeoutMs = 50;
+        const int pollTimeoutMs =
+            (wakeupFds_[0] >= 0) ? -1 : kFallbackPollTimeoutMs;
+        int rc = ::poll((nfds > 0) ? pfds : nullptr, nfds, pollTimeoutMs);
         if (rc < 0) {
             if (errno == EINTR) {
                 continue;
             }
             break;
+        }
+        if (rc == 0) {
+            continue;
         }
 
         if (wakeupFds_[0] >= 0 && (pfds[0].revents & POLLIN)) {

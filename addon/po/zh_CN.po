@@ -1,0 +1,96 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: fcitx5-gemini-voice 0.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-11-18 00:00+0000\n"
+"PO-Revision-Date: 2026-11-18 00:00+0000\n"
+"Last-Translator: \n"
+"Language-Team: Chinese (Simplified)\n"
+"Language: zh_CN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: addon/engine.h:30
+msgid "Trigger Key"
+msgstr "触发快捷键"
+
+#: addon/engine.h:35
+msgid "Show LLM Action Menu"
+msgstr "显示 LLM 操作菜单"
+
+#: addon/engine.h:37
+msgid "Daemon Unix Socket Path"
+msgstr "后台服务 Unix Socket 路径"
+
+#: addon/engine.h:40
+msgid "Transcription Language"
+msgstr "语音转录语言"
+
+#: addon/engine.cpp:241 addon/engine.cpp:553
+msgid "Gemini Voice Daemon not connected"
+msgstr "Gemini Voice Daemon 未连接"
+
+#: addon/engine.cpp:249 addon/engine.cpp:591
+msgid "[Recording...]"
+msgstr "[录音中...]"
+
+#: addon/engine.cpp:261
+msgid "Gemini Voice Daemon disconnected"
+msgstr "Gemini Voice Daemon 连接断开"
+
+#: addon/engine.cpp:267
+msgid "[Finalizing transcript...]"
+msgstr "[整理转录中...]"
+
+#: addon/engine.cpp:450
+msgid "[Raw]"
+msgstr "[原文]"
+
+#: addon/engine.cpp:462
+msgid "[Refine ▸] Polish (Fix typos / Casual / Formal)"
+msgstr "[Refine ▸] 润色 (改错字 / 轻松 / 正式)"
+
+#: addon/engine.cpp:470
+msgid "[Translate] Translate to English"
+msgstr "[Translate] 译为英文"
+
+#: addon/engine.cpp:478
+msgid "[As Prompt] Convert to structured prompt"
+msgstr "[As Prompt] 转为结构化提示词"
+
+#: addon/engine.cpp:509
+msgid "[Fix Typos] Fix typos and punctuation only, keeping spoken tone"
+msgstr "[仅改错字] 修正同音错别字与标点，保留口语原貌"
+
+#: addon/engine.cpp:517
+msgid "[Casual] Natural and relaxed tone for chat"
+msgstr "[轻松语气] 自然流畅，适合即时通讯聊天"
+
+#: addon/engine.cpp:526
+msgid "[Formal] Clear and professional tone for email and docs"
+msgstr "[正式语气] 严谨专业，适合邮件与工作文档"
+
+#: addon/engine.cpp:537
+msgid "Refine ▸"
+msgstr "Refine ▸"
+
+#: addon/engine.cpp:562
+msgid "[AI Processing...]"
+msgstr "[AI 处理中...]"
+
+#: addon/engine.cpp:609
+msgid "No speech detected"
+msgstr "未检测到语音内容"
+
+#: addon/engine.cpp:638
+msgid "Unknown error"
+msgstr "未知错误"
+
+#: addon/engine.cpp:641
+msgid "AI processing failed: "
+msgstr "AI 处理失败: "
+
+#: addon/engine.cpp:662 addon/engine.cpp:668
+msgid "Disconnected from Gemini Voice Daemon"
+msgstr "与 Gemini Voice Daemon 断开连接"

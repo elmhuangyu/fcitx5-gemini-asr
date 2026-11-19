@@ -1,5 +1,6 @@
 #include "engine.h"
 
+#include <fcitx-utils/i18n.h>
 #include <fcitx/addonfactory.h>
 #include <fcitx/addonmanager.h>
 
@@ -8,6 +9,7 @@ namespace fcitx_gemini_voice {
 class GeminiVoiceEngineFactory : public fcitx::AddonFactory {
 public:
     fcitx::AddonInstance *create(fcitx::AddonManager *manager) override {
+        fcitx::registerDomain(FCITX_GETTEXT_DOMAIN, FCITX_INSTALL_LOCALEDIR);
         return new GeminiVoiceEngine(manager->instance());
     }
 };

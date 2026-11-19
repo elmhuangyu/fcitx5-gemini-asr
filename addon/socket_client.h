@@ -15,7 +15,7 @@ public:
     using DisconnectCallback = std::function<void()>;
 
     SocketClient(std::string socketPath, MessageCallback onMessage,
-                 DisconnectCallback onDisconnect);
+                 DisconnectCallback onDisconnect, bool enableWakeupPipe = true);
     ~SocketClient();
 
     SocketClient(const SocketClient &) = delete;

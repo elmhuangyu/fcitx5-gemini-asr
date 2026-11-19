@@ -62,6 +62,7 @@ jobs:
             g++ \
             pkg-config \
             clang-format \
+            gettext \
             libfcitx5core-dev \
             libfcitx5config-dev \
             libfcitx5utils-dev
@@ -79,6 +80,9 @@ jobs:
             -DENABLE_TEST=ON \
             -DCMAKE_CXX_FLAGS="-Werror"
           cmake --build addon/build -j"$(nproc)"
+
+      - name: Verify translations
+        run: test -f addon/build/po/fcitx5-gemini-voice-zh_CN.mo
 
       - name: Run tests
         run: ctest --test-dir addon/build --output-on-failure

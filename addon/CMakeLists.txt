@@ -3,6 +3,7 @@ project(fcitx5-gemini-voice VERSION 0.1.0 LANGUAGES CXX)
 
 find_package(Fcitx5Core REQUIRED)
 include("${FCITX_INSTALL_CMAKECONFIG_DIR}/Fcitx5Utils/Fcitx5CompilerSettings.cmake")
+find_package(Gettext)
 
 option(ENABLE_TEST "Enable unit and integration tests" ON)
 
@@ -18,6 +19,9 @@ target_link_libraries(gemini-voice PRIVATE
     Fcitx5::Utils
 )
 target_include_directories(gemini-voice PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+fcitx5_add_i18n_definition(TARGETS gemini-voice)
+target_compile_definitions(gemini-voice PRIVATE
+    FCITX_GETTEXT_DOMAIN="fcitx5-gemini-voice")
 
 configure_file(gemini-voice-addon.conf.in
     "${CMAKE_CURRENT_BINARY_DIR}/gemini-voice-addon.conf" @ONLY)
@@ -30,6 +34,12 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/gemini-voice-addon.conf"
     DESTINATION "${FCITX_INSTALL_PKGDATADIR}/addon")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/gemini-voice.conf"
     DESTINATION "${FCITX_INSTALL_PKGDATADIR}/inputmethod")
+
+if(GETTEXT_MSGFMT_EXECUTABLE)
+    add_subdirectory(po)
+else()
+    message(WARNING "msgfmt not found; skipping translation compilation")
+endif()
 
 if(ENABLE_TEST)
     enable_testing()

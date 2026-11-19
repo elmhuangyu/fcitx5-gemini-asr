@@ -8,6 +8,7 @@
 #include <vector>
 
 #include <fcitx-config/iniparser.h>
+#include <fcitx-utils/i18n.h>
 #include <fcitx-utils/keysym.h>
 #include <fcitx-utils/log.h>
 #include <fcitx-utils/utf8.h>
@@ -95,6 +96,10 @@ GeminiVoiceEngine::GeminiVoiceEngine(fcitx::Instance *instance)
 
 GeminiVoiceEngine::~GeminiVoiceEngine() {
     alive_->store(false);
+    if (auto *ic = activeIC_.get()) {
+        ic->inputPanel().reset();
+    }
+    activeIC_.unwatch();
     if (socketClient_) {
         socketClient_->stop();
     }
@@ -233,7 +238,7 @@ void GeminiVoiceEngine::handleIdleKey(fcitx::InputContext *ic,
         FCITX_WARN() << "GeminiVoice failed to connect/send start_recording: "
                      << socketClient_->lastError();
         instance_->showCustomInputMethodInformation(
-            ic, "Gemini Voice Daemon 未连接");
+            ic, _("Gemini Voice Daemon not connected"));
         return;
     }
 
@@ -241,7 +246,7 @@ void GeminiVoiceEngine::handleIdleKey(fcitx::InputContext *ic,
     partialText_.clear();
     rawText_.clear();
     state_ = State::RECORDING;
-    setPreedit(ic, "[录音中...]", fcitx::TextFormatFlag::Underline);
+    setPreedit(ic, _("[Recording...]"), fcitx::TextFormatFlag::Underline);
 }
 
 void GeminiVoiceEngine::handleRecordingKey(fcitx::InputContext *ic,
@@ -253,13 +258,13 @@ void GeminiVoiceEngine::handleRecordingKey(fcitx::InputContext *ic,
         key.check(FcitxKey_KP_Enter)) {
         if (!socketClient_->sendLine(buildCommandJson("stop_recording"))) {
             instance_->showCustomInputMethodInformation(
-                ic, "Gemini Voice Daemon 连接断开");
+                ic, _("Gemini Voice Daemon disconnected"));
             clearSession(ic);
             return;
         }
         state_ = State::STOPPING;
         setPreedit(ic,
-                   partialText_.empty() ? "[整理转录中...]"
+                   partialText_.empty() ? _("[Finalizing transcript...]")
                                         : (partialText_ + " ..."),
                    fcitx::TextFormatFlag::Underline);
         return;
@@ -441,25 +446,40 @@ void GeminiVoiceEngine::showActionMenu(fcitx::InputContext *ic) {
     list->setSelectionKey(defaultSelectionKeys());
 
     const std::string preview = truncateUtf8(rawText_, 40);
-    list->append<ActionCandidateWord>(fcitx::Text("[原文] " + preview),
-                                      [this](fcitx::InputContext *targetIc) {
-                                          std::string toCommit = rawText_;
-                                          clearSession(targetIc);
-                                          if (targetIc && !toCommit.empty()) {
-                                              targetIc->commitString(toCommit);
-                                          }
-                                      });
     list->append<ActionCandidateWord>(
-        fcitx::Text("[Refine ▸] 润色 (改错字 / 轻松 / 正式)"),
-        [this](fcitx::InputContext *targetIc) { showRefineSubmenu(targetIc); });
-    list->append<ActionCandidateWord>(fcitx::Text("[Translate] 译为英文"),
-                                      [this](fcitx::InputContext *targetIc) {
-                                          triggerPostProcess(targetIc,
-                                                             "translate_en");
-                                      });
+        fcitx::Text(std::string(_("[Raw]")) + " " + preview),
+        [this, alive = alive_](fcitx::InputContext *targetIc) {
+            if (!alive->load()) {
+                return;
+            }
+            std::string toCommit = rawText_;
+            clearSession(targetIc);
+            if (targetIc && !toCommit.empty()) {
+                targetIc->commitString(toCommit);
+            }
+        });
     list->append<ActionCandidateWord>(
-        fcitx::Text("[As Prompt] 转为结构化提示词"),
-        [this](fcitx::InputContext *targetIc) {
+        fcitx::Text(_("[Refine ▸] Polish (Fix typos / Casual / Formal)")),
+        [this, alive = alive_](fcitx::InputContext *targetIc) {
+            if (!alive->load()) {
+                return;
+            }
+            showRefineSubmenu(targetIc);
+        });
+    list->append<ActionCandidateWord>(
+        fcitx::Text(_("[Translate] Translate to English")),
+        [this, alive = alive_](fcitx::InputContext *targetIc) {
+            if (!alive->load()) {
+                return;
+            }
+            triggerPostProcess(targetIc, "translate_en");
+        });
+    list->append<ActionCandidateWord>(
+        fcitx::Text(_("[As Prompt] Convert to structured prompt")),
+        [this, alive = alive_](fcitx::InputContext *targetIc) {
+            if (!alive->load()) {
+                return;
+            }
             triggerPostProcess(targetIc, "as_prompt");
         });
 
@@ -485,25 +505,36 @@ void GeminiVoiceEngine::showRefineSubmenu(fcitx::InputContext *ic) {
     list->setSelectionKey(defaultSelectionKeys());
 
     list->append<ActionCandidateWord>(
-        fcitx::Text("[仅改错字] 修正同音错别字与标点，保留口语原貌"),
-        [this](fcitx::InputContext *targetIc) {
+        fcitx::Text(_(
+            "[Fix Typos] Fix typos and punctuation only, keeping spoken tone")),
+        [this, alive = alive_](fcitx::InputContext *targetIc) {
+            if (!alive->load()) {
+                return;
+            }
             triggerPostProcess(targetIc, "refine_fix_typos");
         });
     list->append<ActionCandidateWord>(
-        fcitx::Text("[轻松语气] 自然流畅，适合即时通讯聊天"),
-        [this](fcitx::InputContext *targetIc) {
+        fcitx::Text(_("[Casual] Natural and relaxed tone for chat")),
+        [this, alive = alive_](fcitx::InputContext *targetIc) {
+            if (!alive->load()) {
+                return;
+            }
             triggerPostProcess(targetIc, "refine_casual");
         });
     list->append<ActionCandidateWord>(
-        fcitx::Text("[正式语气] 严谨专业，适合邮件与工作文档"),
-        [this](fcitx::InputContext *targetIc) {
+        fcitx::Text(
+            _("[Formal] Clear and professional tone for email and docs")),
+        [this, alive = alive_](fcitx::InputContext *targetIc) {
+            if (!alive->load()) {
+                return;
+            }
             triggerPostProcess(targetIc, "refine_formal");
         });
 
     list->setGlobalCursorIndex(0);
 
     auto &panel = ic->inputPanel();
-    panel.setAuxUp(fcitx::Text("Refine ▸"));
+    panel.setAuxUp(fcitx::Text(_("Refine ▸")));
     panel.setAuxDown(fcitx::Text());
     panel.setCandidateList(std::move(list));
     setPreedit(ic, rawText_, fcitx::TextFormatFlag::Underline);
@@ -519,7 +550,7 @@ void GeminiVoiceEngine::triggerPostProcess(fcitx::InputContext *ic,
     std::string cmd = buildCommandJson("post_process", {{"action", action}});
     if (!socketClient_->sendLine(cmd)) {
         instance_->showCustomInputMethodInformation(
-            ic, "Gemini Voice Daemon 未连接");
+            ic, _("Gemini Voice Daemon not connected"));
         showActionMenu(ic);
         return;
     }
@@ -528,7 +559,7 @@ void GeminiVoiceEngine::triggerPostProcess(fcitx::InputContext *ic,
     ic->inputPanel().setAuxUp(fcitx::Text());
     ic->inputPanel().setAuxDown(fcitx::Text());
     ic->inputPanel().setCandidateList(nullptr);
-    setPreedit(ic, "[AI 处理中...]", fcitx::TextFormatFlag::Underline);
+    setPreedit(ic, _("[AI Processing...]"), fcitx::TextFormatFlag::Underline);
 }
 
 void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
@@ -557,7 +588,8 @@ void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
         }
         auto it = msg.find("text");
         partialText_ = (it != msg.end()) ? it->second : "";
-        setPreedit(ic, partialText_.empty() ? "[录音中...]" : partialText_,
+        setPreedit(ic,
+                   partialText_.empty() ? _("[Recording...]") : partialText_,
                    fcitx::TextFormatFlag::Underline);
         return;
     }
@@ -574,7 +606,8 @@ void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
         std::string raw = (it != msg.end()) ? it->second : "";
         if (raw.empty()) {
             clearSession(ic);
-            instance_->showCustomInputMethodInformation(ic, "未检测到语音内容");
+            instance_->showCustomInputMethodInformation(
+                ic, _("No speech detected"));
             return;
         }
         if (!*config_.showActionMenu) {
@@ -602,10 +635,11 @@ void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
 
     if (ev == "error") {
         auto it = msg.find("message");
-        std::string errMsg = (it != msg.end()) ? it->second : "未知错误";
+        std::string errMsg =
+            (it != msg.end()) ? it->second : _("Unknown error");
         if (state_ == State::PROCESSING && ic && !rawText_.empty()) {
-            instance_->showCustomInputMethodInformation(ic, "AI 处理失败: " +
-                                                                errMsg);
+            instance_->showCustomInputMethodInformation(
+                ic, std::string(_("AI processing failed: ")) + errMsg);
             showActionMenu(ic);
             return;
         }
@@ -626,13 +660,13 @@ void GeminiVoiceEngine::onDaemonDisconnect() {
     auto *ic = activeIC_.get();
     if (state_ == State::PROCESSING && ic && !rawText_.empty()) {
         instance_->showCustomInputMethodInformation(
-            ic, "与 Gemini Voice Daemon 断开连接");
+            ic, _("Disconnected from Gemini Voice Daemon"));
         showActionMenu(ic);
         return;
     }
     if (ic) {
         instance_->showCustomInputMethodInformation(
-            ic, "与 Gemini Voice Daemon 断开连接");
+            ic, _("Disconnected from Gemini Voice Daemon"));
     }
     clearSession(ic);
 }
