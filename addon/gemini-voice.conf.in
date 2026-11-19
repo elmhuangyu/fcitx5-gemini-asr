@@ -1,0 +1,8 @@
+[InputMethod]
+Name=Gemini Voice
+Name[zh_CN]=Gemini 语音
+Icon=audio-input-microphone
+Label=🎙
+LangCode=zh_CN
+Addon=gemini-voice
+Configurable=True

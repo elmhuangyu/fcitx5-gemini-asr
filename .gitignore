@@ -1,0 +1,8 @@
+# Build artifacts
+addon/build/
+daemon/gemini-voice
+daemon/gemini-voice-daemon
+*.o
+*.so
+.cache/
+compile_commands.json

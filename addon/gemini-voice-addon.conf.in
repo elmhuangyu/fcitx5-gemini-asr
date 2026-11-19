@@ -1,0 +1,14 @@
+[Addon]
+Name=Gemini Voice
+Name[zh_CN]=Gemini 语音输入
+Comment=Real-time Voice IME powered by Gemini Live API
+Comment[zh_CN]=基于 Gemini Live API 的实时流式语音输入法
+Category=InputMethod
+Version=@PROJECT_VERSION@
+Library=libgemini-voice
+Type=SharedLibrary
+OnDemand=True
+Configurable=True
+
+[Addon/Dependencies]
+0=core:5.1.0

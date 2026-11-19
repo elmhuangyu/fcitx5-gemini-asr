@@ -1,0 +1,28 @@
+[connection]
+credential_name = "gemini_api_key"
+fallback_env = "GEMINI_API_KEY"
+proxy = ""
+
+[live_transcribe]
+model = "gemini-3.5-transcribe-live"
+language = "zh-CN" # Supported: "zh-CN", "en-US", "auto"
+vad_silence_ms = 1200
+
+[post_process]
+model = "gemini-2.5-flash"
+prefetch = ["refine_fix_typos", "refine_formal"]
+
+[post_process.models]
+# Optional per-action model overrides (empty inherits post_process.model):
+# refine_fix_typos = "gemini-2.5-flash-lite"
+# refine_casual = "gemini-2.5-flash"
+# refine_formal = "gemini-2.5-pro"
+# translate_en = "gemini-2.5-flash"
+# as_prompt = "gemini-2.5-pro"
+
+[prompts]
+refine_fix_typos = "仅修正以下语音转录文本中的错别字、同音字错误和标点符号。严禁增删词汇或改变原本的口语语气，直接输出结果："
+refine_casual = "将以下文本润色为自然、流畅、轻松的日常对话语气（适合即时通讯聊天），保留原意，直接输出结果："
+refine_formal = "将以下文本润色为清晰、专业、得体的正式书面语（适合工作邮件或技术文档），直接输出结果："
+translate_en = "Translate the following text into natural, idiomatic English. Output ONLY the translation:"
+as_prompt = "将以下口述需求整理为结构清晰、条件明确的 AI Prompt，直接输出提示词内容："

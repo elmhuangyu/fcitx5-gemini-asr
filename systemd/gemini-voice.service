@@ -1,0 +1,12 @@
+[Unit]
+Description=Gemini Voice IME Background Daemon
+After=pipewire.service
+
+[Service]
+ExecStart=%h/.local/bin/gemini-voice-daemon
+LoadCredentialEncrypted=gemini_api_key:%h/.config/gemini-voice/gemini_api_key.cred
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

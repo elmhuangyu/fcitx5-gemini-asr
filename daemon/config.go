@@ -1,0 +1,446 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/BurntSushi/toml"
+	"github.com/fsnotify/fsnotify"
+	"github.com/gorilla/websocket"
+	"golang.org/x/net/proxy"
+)
+
+const DefaultVADThreshold = 300.0
+
+// KnownActions lists built-in post-processing action keys in menu display order.
+var KnownActions = []string{
+	"refine_fix_typos",
+	"refine_casual",
+	"refine_formal",
+	"translate_en",
+	"as_prompt",
+}
+
+type Config struct {
+	Connection     ConnectionConfig     `toml:"connection"`
+	LiveTranscribe LiveTranscribeConfig `toml:"live_transcribe"`
+	PostProcess    PostProcessConfig    `toml:"post_process"`
+	Prompts        map[string]string    `toml:"prompts"`
+}
+
+type ConnectionConfig struct {
+	CredentialName string `toml:"credential_name"`
+	FallbackEnv    string `toml:"fallback_env"`
+	Proxy          string `toml:"proxy"`
+	LiveWSURL      string `toml:"live_ws_url,omitempty"`
+	APIBaseURL     string `toml:"api_base_url,omitempty"`
+}
+
+type LiveTranscribeConfig struct {
+	Model        string  `toml:"model"`
+	Language     string  `toml:"language"`
+	VADSilenceMs int     `toml:"vad_silence_ms"`
+	VADThreshold float64 `toml:"vad_threshold,omitempty"`
+}
+
+type PostProcessConfig struct {
+	Model    string            `toml:"model"`
+	Models   map[string]string `toml:"models,omitempty"`
+	Prefetch []string          `toml:"prefetch"`
+}
+
+func DefaultConfig() Config {
+	return Config{
+		Connection: ConnectionConfig{
+			CredentialName: DefaultCredentialName,
+			FallbackEnv:    DefaultFallbackEnv,
+			Proxy:          "",
+		},
+		LiveTranscribe: LiveTranscribeConfig{
+			Model:        "gemini-3.5-transcribe-live",
+			Language:     "zh-CN",
+			VADSilenceMs: 1200,
+			VADThreshold: DefaultVADThreshold,
+		},
+		PostProcess: PostProcessConfig{
+			Model:    "gemini-2.5-flash",
+			Prefetch: []string{"refine_fix_typos", "refine_formal"},
+		},
+		Prompts: map[string]string{
+			"refine_fix_typos": "仅修正以下语音转录文本中的错别字、同音字错误和标点符号。严禁增删词汇或改变原本的口语语气，直接输出结果：",
+			"refine_casual":    "将以下文本润色为自然、流畅、轻松的日常对话语气（适合即时通讯聊天），保留原意，直接输出结果：",
+			"refine_formal":    "将以下文本润色为清晰、专业、得体的正式书面语（适合工作邮件或技术文档），直接输出结果：",
+			"translate_en":     "Translate the following text into natural, idiomatic English. Output ONLY the translation:",
+			"as_prompt":        "将以下口述需求整理为结构清晰、条件明确的 AI Prompt，直接输出提示词内容：",
+		},
+	}
+}
+
+// DefaultConfigTOML returns the canonical config.toml template matching systemd/config.toml.
+func DefaultConfigTOML() string {
+	return `[connection]
+credential_name = "gemini_api_key"
+fallback_env = "GEMINI_API_KEY"
+proxy = ""
+
+[live_transcribe]
+model = "gemini-3.5-transcribe-live"
+language = "zh-CN" # Supported: "zh-CN", "en-US", "auto"
+vad_silence_ms = 1200
+
+[post_process]
+model = "gemini-2.5-flash"
+prefetch = ["refine_fix_typos", "refine_formal"]
+
+[post_process.models]
+# Optional per-action model overrides (empty inherits post_process.model):
+# refine_fix_typos = "gemini-2.5-flash-lite"
+# refine_casual = "gemini-2.5-flash"
+# refine_formal = "gemini-2.5-pro"
+# translate_en = "gemini-2.5-flash"
+# as_prompt = "gemini-2.5-pro"
+
+[prompts]
+refine_fix_typos = "仅修正以下语音转录文本中的错别字、同音字错误和标点符号。严禁增删词汇或改变原本的口语语气，直接输出结果："
+refine_casual = "将以下文本润色为自然、流畅、轻松的日常对话语气（适合即时通讯聊天），保留原意，直接输出结果："
+refine_formal = "将以下文本润色为清晰、专业、得体的正式书面语（适合工作邮件或技术文档），直接输出结果："
+translate_en = "Translate the following text into natural, idiomatic English. Output ONLY the translation:"
+as_prompt = "将以下口述需求整理为结构清晰、条件明确的 AI Prompt，直接输出提示词内容："
+`
+}
+
+func (c Config) Clone() Config {
+	out := c
+	if c.PostProcess.Prefetch != nil {
+		out.PostProcess.Prefetch = append([]string(nil), c.PostProcess.Prefetch...)
+	}
+	if c.PostProcess.Models != nil {
+		out.PostProcess.Models = make(map[string]string, len(c.PostProcess.Models))
+		for k, v := range c.PostProcess.Models {
+			out.PostProcess.Models[k] = v
+		}
+	}
+	if c.Prompts != nil {
+		out.Prompts = make(map[string]string, len(c.Prompts))
+		for k, v := range c.Prompts {
+			out.Prompts[k] = v
+		}
+	}
+	return out
+}
+
+// ModelForAction returns the configured model override for action, falling back to post_process.model.
+func (c Config) ModelForAction(action string) string {
+	if m := strings.TrimSpace(c.PostProcess.Models[action]); m != "" {
+		return m
+	}
+	if m := strings.TrimSpace(c.PostProcess.Model); m != "" {
+		return m
+	}
+	return "gemini-2.5-flash"
+}
+
+// EffectiveActionNames returns KnownActions followed by any extra sorted prompt keys.
+func (c Config) EffectiveActionNames() []string {
+	out := make([]string, 0, len(KnownActions)+len(c.Prompts))
+	seen := make(map[string]struct{}, len(KnownActions)+len(c.Prompts))
+	for _, a := range KnownActions {
+		out = append(out, a)
+		seen[a] = struct{}{}
+	}
+	var extra []string
+	for k := range c.Prompts {
+		if _, ok := seen[k]; !ok {
+			extra = append(extra, k)
+		}
+	}
+	sort.Strings(extra)
+	return append(out, extra...)
+}
+
+// SaveConfigFile atomically writes cfg as TOML with mode 0600.
+func SaveConfigFile(path string, cfg Config) error {
+	cleanPath := filepath.Clean(path)
+	dir := filepath.Dir(cleanPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create config directory %q: %w", dir, err)
+	}
+
+	toWrite := cfg.Clone()
+	if toWrite.PostProcess.Prefetch == nil {
+		toWrite.PostProcess.Prefetch = []string{}
+	}
+	if len(toWrite.PostProcess.Models) > 0 {
+		pruned := make(map[string]string, len(toWrite.PostProcess.Models))
+		for k, v := range toWrite.PostProcess.Models {
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				pruned[k] = trimmed
+			}
+		}
+		if len(pruned) > 0 {
+			toWrite.PostProcess.Models = pruned
+		} else {
+			toWrite.PostProcess.Models = nil
+		}
+	}
+
+	var buf bytes.Buffer
+	enc := toml.NewEncoder(&buf)
+	if err := enc.Encode(toWrite); err != nil {
+		return fmt.Errorf("encode config TOML: %w", err)
+	}
+	return writeFileAtomic(cleanPath, buf.Bytes(), 0o600)
+}
+
+func LoadConfigFile(path string) (Config, error) {
+	cfg := DefaultConfig()
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		return Config{}, err
+	}
+	if strings.TrimSpace(cfg.Connection.CredentialName) == "" {
+		cfg.Connection.CredentialName = DefaultCredentialName
+	}
+	if strings.TrimSpace(cfg.Connection.FallbackEnv) == "" {
+		cfg.Connection.FallbackEnv = DefaultFallbackEnv
+	}
+	if strings.TrimSpace(cfg.LiveTranscribe.Model) == "" {
+		cfg.LiveTranscribe.Model = "gemini-3.5-transcribe-live"
+	}
+	if cfg.LiveTranscribe.VADThreshold <= 0 {
+		cfg.LiveTranscribe.VADThreshold = DefaultVADThreshold
+	}
+	if strings.TrimSpace(cfg.PostProcess.Model) == "" {
+		cfg.PostProcess.Model = "gemini-2.5-flash"
+	}
+	return cfg, nil
+}
+
+type ConfigManager struct {
+	path     string
+	mu       sync.RWMutex
+	cfg      Config
+	onReload func(Config)
+}
+
+func NewConfigManager(path string) (*ConfigManager, error) {
+	cleanPath := filepath.Clean(path)
+	cfg, err := LoadConfigFile(cleanPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			cfg = DefaultConfig()
+		} else {
+			return nil, fmt.Errorf("load config %q: %w", cleanPath, err)
+		}
+	}
+	return &ConfigManager{
+		path: cleanPath,
+		cfg:  cfg,
+	}, nil
+}
+
+func (m *ConfigManager) Get() Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg.Clone()
+}
+
+func (m *ConfigManager) SetOnReload(fn func(Config)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onReload = fn
+}
+
+func (m *ConfigManager) Reload() error {
+	cfg, err := LoadConfigFile(m.path)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.cfg = cfg
+	cb := m.onReload
+	m.mu.Unlock()
+
+	if cb != nil {
+		cb(cfg.Clone())
+	}
+	return nil
+}
+
+// Watch monitors the parent directory of the config file so both in-place writes
+// and atomic editor renames trigger debounced hot-reloads.
+func (m *ConfigManager) Watch(ctx context.Context) error {
+	dir := filepath.Dir(m.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("ensure config dir %q: %w", dir, err)
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return fmt.Errorf("create fsnotify watcher: %w", err)
+	}
+	defer func() { _ = watcher.Close() }()
+
+	if err := watcher.Add(dir); err != nil {
+		return fmt.Errorf("watch config dir %q: %w", dir, err)
+	}
+
+	var debounceTimer *time.Timer
+	var timerCh <-chan time.Time
+	resetTimer := func() {
+		if debounceTimer == nil {
+			debounceTimer = time.NewTimer(100 * time.Millisecond)
+			timerCh = debounceTimer.C
+			return
+		}
+		if !debounceTimer.Stop() {
+			select {
+			case <-debounceTimer.C:
+			default:
+			}
+		}
+		debounceTimer.Reset(100 * time.Millisecond)
+		timerCh = debounceTimer.C
+	}
+
+	target := filepath.Clean(m.path)
+
+	for {
+		select {
+		case <-ctx.Done():
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
+			return nil
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return nil
+			}
+			if filepath.Clean(event.Name) != target {
+				continue
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename) != 0 {
+				resetTimer()
+			}
+		case err, ok := <-watcher.Errors:
+			if !ok {
+				return nil
+			}
+			log.Printf("config watcher error: %v", err)
+		case <-timerCh:
+			timerCh = nil
+			if err := m.Reload(); err != nil {
+				if !errors.Is(err, os.ErrNotExist) {
+					log.Printf("failed to reload config %q (keeping previous valid config): %v", m.path, err)
+				}
+			} else {
+				log.Printf("reloaded config from %s", m.path)
+			}
+		}
+	}
+}
+
+func BuildHTTPClient(proxyAddr string, timeout time.Duration) (*http.Client, error) {
+	tr := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		MaxIdleConns:          16,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
+	trimmed := strings.TrimSpace(proxyAddr)
+	if trimmed != "" {
+		u, err := url.Parse(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy URL %q: %w", RedactURL(trimmed), err)
+		}
+		switch strings.ToLower(u.Scheme) {
+		case "http", "https":
+			tr.Proxy = http.ProxyURL(u)
+		case "socks5", "socks5h":
+			dialer, err := proxy.FromURL(u, proxy.Direct)
+			if err != nil {
+				return nil, fmt.Errorf("configure socks5 proxy %q: %w", RedactURL(trimmed), err)
+			}
+			tr.Proxy = nil
+			tr.DialContext = wrapProxyDialContext(dialer)
+		default:
+			return nil, fmt.Errorf("unsupported proxy scheme %q", u.Scheme)
+		}
+	}
+
+	return &http.Client{
+		Transport: tr,
+		Timeout:   timeout,
+	}, nil
+}
+
+func BuildWSDialer(proxyAddr string) (*websocket.Dialer, error) {
+	dialer := *websocket.DefaultDialer
+	dialer.HandshakeTimeout = 10 * time.Second
+	dialer.Proxy = http.ProxyFromEnvironment
+
+	trimmed := strings.TrimSpace(proxyAddr)
+	if trimmed != "" {
+		u, err := url.Parse(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("invalid proxy URL %q: %w", RedactURL(trimmed), err)
+		}
+		switch strings.ToLower(u.Scheme) {
+		case "http", "https":
+			dialer.Proxy = http.ProxyURL(u)
+		case "socks5", "socks5h":
+			pDialer, err := proxy.FromURL(u, proxy.Direct)
+			if err != nil {
+				return nil, fmt.Errorf("configure socks5 proxy %q: %w", RedactURL(trimmed), err)
+			}
+			dialer.Proxy = nil
+			dialer.NetDialContext = wrapProxyDialContext(pDialer)
+		default:
+			return nil, fmt.Errorf("unsupported proxy scheme %q", u.Scheme)
+		}
+	}
+
+	return &dialer, nil
+}
+
+func wrapProxyDialContext(d proxy.Dialer) func(context.Context, string, string) (net.Conn, error) {
+	if cd, ok := d.(proxy.ContextDialer); ok {
+		return cd.DialContext
+	}
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		type result struct {
+			conn net.Conn
+			err  error
+		}
+		ch := make(chan result, 1)
+		go func() {
+			c, err := d.Dial(network, addr)
+			ch <- result{conn: c, err: err}
+		}()
+		select {
+		case <-ctx.Done():
+			go func() {
+				res := <-ch
+				if res.conn != nil {
+					_ = res.conn.Close()
+				}
+			}()
+			return nil, ctx.Err()
+		case res := <-ch:
+			return res.conn, res.err
+		}
+	}
+}

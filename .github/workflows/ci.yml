@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GO_VERSION: 1.27.4
+  GOIMPORTS_VERSION: latest
+  GOLANGCI_LINT_VERSION: latest
+
+jobs:
+  daemon:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: daemon
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: daemon/go.sum
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Install goimports
+        run: go install golang.org/x/tools/cmd/goimports@${{ env.GOIMPORTS_VERSION }}
+
+      - name: Install golangci-lint
+        run: |
+          curl -sSfL https://golangci-lint.run/install.sh | sh -s -- -b "$(go env GOPATH)/bin" "${{ env.GOLANGCI_LINT_VERSION }}"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Format check
+        run: test -z "$("$(go env GOPATH)/bin/goimports" -local github.com/elmhuangyu/fcitx5-gemini-asr/daemon -l .)"
+
+      - name: Lint check
+        run: golangci-lint run ./...
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Run tests
+        run: go test -v -race ./...
+
+  addon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake \
+            g++ \
+            pkg-config \
+            clang-format \
+            libfcitx5core-dev \
+            libfcitx5config-dev \
+            libfcitx5utils-dev
+
+      - name: Shell syntax check
+        run: bash -n install.sh
+
+      - name: Format check
+        run: clang-format --dry-run --Werror addon/*.h addon/*.cpp addon/tests/*.cpp
+
+      - name: Build
+        run: |
+          cmake -S addon -B addon/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DENABLE_TEST=ON \
+            -DCMAKE_CXX_FLAGS="-Werror"
+          cmake --build addon/build -j"$(nproc)"
+
+      - name: Run tests
+        run: ctest --test-dir addon/build --output-on-failure
+
+      - name: Verify exported factory symbol
+        run: nm -D addon/build/libgemini-voice.so | grep -q fcitx_addon_factory_instance

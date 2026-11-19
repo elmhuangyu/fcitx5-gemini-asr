@@ -1,0 +1,251 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type recordedCmd struct {
+	stdin string
+	name  string
+	args  []string
+}
+
+func TestMaskSecret(t *testing.T) {
+	if got := MaskSecret(""); got != "(empty)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := MaskSecret("abcd1234"); got != "********" {
+		t.Fatalf("got %q", got)
+	}
+	if got := MaskSecret("AIzaSyDummyKeyValue9876"); got != "AIza...9876" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	credPath := filepath.Join(dir, "gemini-voice", "gemini_api_key.cred")
+	rawSecret := "AIzaSyTestSecretKey12345"
+
+	var cmds []recordedCmd
+	var stdout, stderr bytes.Buffer
+	deps := cliDeps{
+		stdin:  strings.NewReader("  " + rawSecret + "\n"),
+		stdout: &stdout,
+		stderr: &stderr,
+		isTTY:  func() bool { return false },
+		runCmd: func(ctx context.Context, stdin string, name string, args ...string) cmdResult {
+			cmds = append(cmds, recordedCmd{stdin: stdin, name: name, args: args})
+			if name == "systemd-creds" && len(args) > 0 && args[0] == "encrypt" {
+				outFile := args[len(args)-1]
+				if err := os.WriteFile(outFile, []byte("ENCRYPTED_BLOB"), 0o644); err != nil {
+					return cmdResult{err: err}
+				}
+				return cmdResult{}
+			}
+			if name == "systemd-creds" && len(args) > 0 && args[0] == "decrypt" {
+				return cmdResult{stdout: rawSecret + "\n"}
+			}
+			return cmdResult{}
+		},
+		lookPath: func(file string) (string, error) { return "/usr/bin/" + file, nil },
+		getenv:   func(string) string { return "" },
+		serveFn:  func(string, string) int { return 0 },
+	}
+
+	code := runCLI("gemini-voice", []string{"auth", "set", "--config", cfgPath, "--stdin"}, deps)
+	if code != 0 {
+		t.Fatalf("auth set exit=%d stderr=%s", code, stderr.String())
+	}
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 systemd-creds calls (encrypt+decrypt), got %d", len(cmds))
+	}
+	if cmds[0].stdin != rawSecret {
+		t.Fatalf("expected trimmed secret on stdin, got %q", cmds[0].stdin)
+	}
+	for _, a := range cmds[0].args {
+		if strings.Contains(a, rawSecret) {
+			t.Fatalf("secret leaked in CLI argument: %q", a)
+		}
+	}
+	if strings.Contains(stdout.String(), rawSecret) {
+		t.Fatalf("raw secret leaked in stdout: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "AIza...2345") {
+		t.Fatalf("expected masked fingerprint in stdout: %s", stdout.String())
+	}
+
+	info, err := os.Stat(credPath)
+	if err != nil {
+		t.Fatalf("stat cred file: %v", err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("cred file mode = %04o, want 0600", info.Mode().Perm())
+	}
+
+	// Verify command
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLI("gemini-voice", []string{"verify-key", "--config", cfgPath}, deps)
+	if code != 0 {
+		t.Fatalf("verify-key exit=%d stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), rawSecret) || !strings.Contains(stdout.String(), "AIza...2345") {
+		t.Fatalf("unexpected verify output: %s", stdout.String())
+	}
+
+	// Key-file input
+	keyFile := filepath.Join(dir, "raw.key")
+	if err := os.WriteFile(keyFile, []byte("AIzaFromFileKey9999\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmds = nil
+	stdout.Reset()
+	code = runCLI("gemini-voice", []string{"set-key", "--config", cfgPath, "--key-file", keyFile, "--with-key", "auto"}, deps)
+	if code != 0 {
+		t.Fatalf("set-key --key-file exit=%d stderr=%s", code, stderr.String())
+	}
+	if cmds[0].stdin != "AIzaFromFileKey9999" {
+		t.Fatalf("unexpected key-file stdin: %q", cmds[0].stdin)
+	}
+
+	// Remove command
+	stdout.Reset()
+	code = runCLI("gemini-voice", []string{"auth", "remove", "--config", cfgPath}, deps)
+	if code != 0 {
+		t.Fatalf("auth remove exit=%d stderr=%s", code, stderr.String())
+	}
+	if _, err := os.Stat(credPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected cred file removed, stat err=%v", err)
+	}
+}
+
+func TestCLI_AuthSetErrorsAndTempCleanup(t *testing.T) {
+	dir := t.TempDir()
+	cfgDir := filepath.Join(dir, "gemini-voice")
+	cfgPath := filepath.Join(cfgDir, "config.toml")
+
+	// Empty key rejected
+	var stdout, stderr bytes.Buffer
+	deps := cliDeps{
+		stdin:    strings.NewReader("   \n"),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		isTTY:    func() bool { return false },
+		runCmd:   func(context.Context, string, string, ...string) cmdResult { return cmdResult{} },
+		lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		getenv:   func(string) string { return "" },
+		serveFn:  func(string, string) int { return 0 },
+	}
+	if code := runCLI("gemini-voice", []string{"auth", "set", "--config", cfgPath, "--stdin"}, deps); code == 0 {
+		t.Fatal("expected failure for empty API key")
+	}
+
+	// TPM2 failure prints hint and cleans up temp file
+	stdout.Reset()
+	stderr.Reset()
+	deps.stdin = strings.NewReader("AIzaSyValidKey12345")
+	deps.runCmd = func(context.Context, string, string, ...string) cmdResult {
+		return cmdResult{stderr: "No TPM2 device found", err: errors.New("exit status 1")}
+	}
+	if code := runCLI("gemini-voice", []string{"auth", "set", "--config", cfgPath, "--stdin"}, deps); code == 0 {
+		t.Fatal("expected failure when systemd-creds fails")
+	}
+	if !strings.Contains(stderr.String(), "--with-key=auto") {
+		t.Fatalf("expected TPM2 fallback hint in stderr: %s", stderr.String())
+	}
+	entries, err := os.ReadDir(cfgDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected temp file cleaned up, found %d entries", len(entries))
+	}
+}
+
+func TestCLI_InitStatusAndDaemonDispatch(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	sockPath := filepath.Join(dir, "gemini.sock")
+
+	var stdout, stderr bytes.Buffer
+	deps := cliDeps{
+		stdin:  strings.NewReader("AIzaSyInitSecretKey7777\n"),
+		stdout: &stdout,
+		stderr: &stderr,
+		isTTY:  func() bool { return false },
+		runCmd: func(ctx context.Context, stdin string, name string, args ...string) cmdResult {
+			if name == "systemd-creds" && len(args) > 0 && args[0] == "encrypt" {
+				outFile := args[len(args)-1]
+				if err := os.WriteFile(outFile, []byte("ENC"), 0o600); err != nil {
+					return cmdResult{err: err}
+				}
+				return cmdResult{}
+			}
+			if name == "systemd-creds" && len(args) > 0 && args[0] == "decrypt" {
+				return cmdResult{stdout: "AIzaSyInitSecretKey7777"}
+			}
+			if name == "systemctl" && len(args) >= 2 && args[1] == "is-active" {
+				return cmdResult{stdout: "inactive\n"}
+			}
+			return cmdResult{}
+		},
+		lookPath: func(file string) (string, error) { return "/usr/bin/" + file, nil },
+		getenv:   func(string) string { return "" },
+		serveFn:  func(string, string) int { return 0 },
+	}
+
+	if code := runCLI("gemini-voice", []string{"init", "--config", cfgPath, "--stdin"}, deps); code != 0 {
+		t.Fatalf("init exit=%d stderr=%s", code, stderr.String())
+	}
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != DefaultConfigTOML() {
+		t.Fatal("init wrote unexpected config.toml content")
+	}
+
+	// Second init without --force must preserve custom config.toml
+	if err := os.WriteFile(cfgPath, []byte("# custom\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps.stdin = strings.NewReader("AIzaSyInitSecretKey8888\n")
+	if code := runCLI("gemini-voice", []string{"init", "--config", cfgPath, "--stdin"}, deps); code != 0 {
+		t.Fatalf("second init exit=%d stderr=%s", code, stderr.String())
+	}
+	data2, err := os.ReadFile(cfgPath)
+	if err != nil || string(data2) != "# custom\n" {
+		t.Fatalf("existing config.toml was overwritten: %v %q", err, string(data2))
+	}
+
+	// Status check
+	stdout.Reset()
+	if code := runCLI("gemini-voice", []string{"status", "--config", cfgPath, "--socket", sockPath}, deps); code != 0 {
+		t.Fatalf("status exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "TPM2: available") {
+		t.Fatalf("unexpected status output:\n%s", stdout.String())
+	}
+
+	// Invoking as gemini-voice-daemon with no args or -socket dispatches to serveFn
+	var servedCfg, servedSock string
+	deps.serveFn = func(c, s string) int {
+		servedCfg = c
+		servedSock = s
+		return 42
+	}
+	if code := runCLI("/usr/local/bin/gemini-voice-daemon", []string{"-config", cfgPath, "-socket", sockPath}, deps); code != 42 {
+		t.Fatalf("daemon dispatch exit=%d, want 42", code)
+	}
+	if servedCfg != cfgPath || servedSock != sockPath {
+		t.Fatalf("daemon got cfg=%q sock=%q", servedCfg, servedSock)
+	}
+}

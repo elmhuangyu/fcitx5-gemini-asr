@@ -1,0 +1,143 @@
+package main
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+)
+
+func TestConfigLoadSystemdTemplate(t *testing.T) {
+	cfg, err := LoadConfigFile(filepath.Join("..", "systemd", "config.toml"))
+	if err != nil {
+		t.Fatalf("load systemd/config.toml: %v", err)
+	}
+	if cfg.LiveTranscribe.Model != "gemini-3.5-transcribe-live" {
+		t.Fatalf("unexpected live model: %q", cfg.LiveTranscribe.Model)
+	}
+	if cfg.LiveTranscribe.Language != "zh-CN" {
+		t.Fatalf("unexpected language: %q", cfg.LiveTranscribe.Language)
+	}
+	if cfg.LiveTranscribe.VADSilenceMs != 1200 {
+		t.Fatalf("unexpected vad_silence_ms: %d", cfg.LiveTranscribe.VADSilenceMs)
+	}
+	if cfg.PostProcess.Model != "gemini-2.5-flash" {
+		t.Fatalf("unexpected post_process model: %q", cfg.PostProcess.Model)
+	}
+	if len(cfg.PostProcess.Prefetch) != 2 {
+		t.Fatalf("unexpected prefetch: %#v", cfg.PostProcess.Prefetch)
+	}
+	for _, key := range []string{"refine_fix_typos", "refine_casual", "refine_formal", "translate_en", "as_prompt"} {
+		if cfg.Prompts[key] == "" {
+			t.Fatalf("missing prompt %q", key)
+		}
+	}
+
+	raw, err := os.ReadFile(filepath.Join("..", "systemd", "config.toml"))
+	if err != nil {
+		t.Fatalf("read systemd/config.toml: %v", err)
+	}
+	if string(raw) != DefaultConfigTOML() {
+		t.Fatalf("DefaultConfigTOML() drifted from systemd/config.toml")
+	}
+}
+
+func TestConfigManagerHotReload_WriteAndAtomicRename(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.toml")
+	initial := `
+[live_transcribe]
+model = "gemini-3.5-transcribe-live"
+language = "zh-CN"
+vad_silence_ms = 1200
+
+[prompts]
+refine_formal = "initial prompt"
+`
+	if err := os.WriteFile(cfgPath, []byte(initial), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr, err := NewConfigManager(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := make(chan Config, 4)
+	mgr.SetOnReload(func(c Config) {
+		reloaded <- c
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- mgr.Watch(ctx)
+	}()
+
+	// Give fsnotify watcher a moment to attach.
+	time.Sleep(50 * time.Millisecond)
+
+	// 1) Atomic rename save (as done by editors like vim/nano).
+	tmpPath := filepath.Join(dir, ".config.toml.tmp")
+	updated1 := `
+[live_transcribe]
+model = "gemini-3.5-transcribe-live"
+language = "en-US"
+vad_silence_ms = 900
+
+[prompts]
+refine_formal = "atomic renamed prompt"
+`
+	if err := os.WriteFile(tmpPath, []byte(updated1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(tmpPath, cfgPath); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case c := <-reloaded:
+		if c.Prompts["refine_formal"] != "atomic renamed prompt" || c.LiveTranscribe.Language != "en-US" {
+			t.Fatalf("unexpected reloaded config: %+v", c)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for atomic rename hot-reload")
+	}
+
+	// 2) Broken TOML should preserve previous valid config.
+	if err := os.WriteFile(cfgPath, []byte("this is = [not valid toml"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	if got := mgr.Get().Prompts["refine_formal"]; got != "atomic renamed prompt" {
+		t.Fatalf("expected previous valid config preserved, got %q", got)
+	}
+
+	// 3) Direct in-place write restores valid update.
+	updated2 := `
+[prompts]
+refine_formal = "direct write prompt"
+`
+	if err := os.WriteFile(cfgPath, []byte(updated2), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case c := <-reloaded:
+		if c.Prompts["refine_formal"] != "direct write prompt" {
+			t.Fatalf("unexpected direct write config: %+v", c)
+		}
+		// Default prompts omitted from TOML should still exist.
+		if c.Prompts["translate_en"] == "" {
+			t.Fatal("expected omitted default prompts to remain intact")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for direct write hot-reload")
+	}
+
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("watcher returned error: %v", err)
+	}
+}
