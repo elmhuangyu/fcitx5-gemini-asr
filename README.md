@@ -46,14 +46,16 @@ The installer places `gemini-voice-daemon` and its CLI symlink `gemini-voice` in
 
 ### Interactive Setup Wizard
 
+Both `gemini-voice init` and `gemini-voice configure` launch an interactive TUI form with arrow-key navigation (`↑/↓`, `←/→` cursor editing), `Space` multi-select prefetch toggles, inline validation, and hidden/masked API key input (`Ctrl+C` cancels without modifying files):
+
 ```bash
-# Full guided setup (input mode, language, VAD, live & per-action models, hotkey, proxy, and TPM2 API key):
+# Full guided TUI setup (input mode, language, live mode, vocabulary, VAD, models, hotkey, proxy, and TPM2 API key):
 gemini-voice init
 
 # Initialize and immediately enable/start the systemd user service:
 gemini-voice init --enable-service
 
-# Re-run configuration wizard later without touching encrypted credentials:
+# Re-run configuration TUI form later without touching encrypted credentials:
 gemini-voice configure
 ```
 

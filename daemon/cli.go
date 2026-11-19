@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/huh/v2"
 	"golang.org/x/term"
 )
 
@@ -34,6 +35,7 @@ type cliDeps struct {
 	lookPath     func(file string) (string, error)
 	getenv       func(key string) string
 	serveFn      func(configPath, socketPath string) int
+	runSetupForm func(state *setupFormState, opts setupFormOptions) error
 }
 
 func defaultCLIDeps() cliDeps {
@@ -150,8 +152,8 @@ Usage:
   gemini-voice <command> [options]
 
 Commands:
-  init                Interactive setup wizard (config, input mode, models, and encrypted key)
-  configure           Interactive wizard for input mode, models, hotkeys, language, and proxy
+  init                Interactive TUI setup wizard (config, input mode, models, and encrypted key)
+  configure           Interactive TUI form for input mode, models, hotkeys, language, and proxy
   config              Show, get, or set daemon and Fcitx5 addon settings
   models              Inspect or update live and per-action post-process models
   auth set            Encrypt and store Gemini API key (alias: set-key)
@@ -312,6 +314,7 @@ type authSetOptions struct {
 	withKey    string
 	useStdin   bool
 	keyFile    string
+	secret     string
 	noVerify   bool
 	restart    bool
 }
@@ -325,9 +328,12 @@ func encryptAndSaveCredential(opts authSetOptions, deps cliDeps) error {
 		return err
 	}
 
-	apiKey, err := readSecretInput(deps, opts.keyFile, opts.useStdin)
-	if err != nil {
-		return err
+	apiKey := strings.TrimSpace(opts.secret)
+	if apiKey == "" {
+		apiKey, err = readSecretInput(deps, opts.keyFile, opts.useStdin)
+		if err != nil {
+			return err
+		}
 	}
 
 	dir := filepath.Dir(outPath)
@@ -688,9 +694,41 @@ func cmdInit(args []string, deps cliDeps) int {
 
 	interactive := !*nonInteractive && !*useStdin && strings.TrimSpace(*keyFile) == "" && deps.isTTY()
 	if interactive {
-		if err := runConfigureWizard(*configPath, *fcitxPath, deps); err != nil {
+		_, credPath, resolveErr := resolveCredNameAndPath(*configPath, "", "")
+		credExists := false
+		if resolveErr == nil {
+			if info, credErr := os.Stat(credPath); credErr == nil && !info.IsDir() {
+				credExists = true
+			}
+		}
+
+		res, err := runSetupTUI(*configPath, *fcitxPath, setupFormOptions{
+			IncludeAPIKey: true,
+			WithKey:       *withKey,
+			CredPath:      credPath,
+			CredExists:    credExists,
+		}, deps)
+		if err != nil {
+			if errors.Is(err, huh.ErrUserAborted) {
+				_, _ = fmt.Fprintln(deps.stderr, "Setup cancelled; no changes were saved.")
+				return 1
+			}
 			_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
 			return 1
+		}
+
+		if res.OverwriteKey {
+			if err := encryptAndSaveCredential(authSetOptions{
+				configPath: *configPath,
+				withKey:    *withKey,
+				secret:     res.APIKey,
+				noVerify:   *noVerify,
+			}, deps); err != nil {
+				_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
+				return 1
+			}
+		} else if credPath != "" {
+			_, _ = fmt.Fprintf(deps.stdout, "Keeping existing credential: %s\n", credPath)
 		}
 	} else {
 		cfgDir := filepath.Dir(*configPath)
@@ -712,36 +750,14 @@ func cmdInit(args []string, deps cliDeps) int {
 		} else {
 			_, _ = fmt.Fprintf(deps.stdout, "Keeping existing config: %s\n", *configPath)
 		}
-	}
 
-	skipKey := false
-	if interactive {
-		_, credPath, resolveErr := resolveCredNameAndPath(*configPath, "", "")
-		if resolveErr == nil {
-			if _, credErr := os.Stat(credPath); credErr == nil {
-				ans, pErr := promptValue(deps.stdin, deps.stderr,
-					fmt.Sprintf("\nEncrypted credential already exists at %s. Overwrite? (y/N)", credPath), "N")
-				if pErr != nil {
-					_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", pErr)
-					return 1
-				}
-				if !strings.HasPrefix(strings.ToLower(ans), "y") {
-					skipKey = true
-					_, _ = fmt.Fprintf(deps.stdout, "Keeping existing credential: %s\n", credPath)
-				}
-			}
-		}
-	}
-
-	if !skipKey {
-		err := encryptAndSaveCredential(authSetOptions{
+		if err := encryptAndSaveCredential(authSetOptions{
 			configPath: *configPath,
 			withKey:    *withKey,
 			useStdin:   *useStdin,
 			keyFile:    *keyFile,
 			noVerify:   *noVerify,
-		}, deps)
-		if err != nil {
+		}, deps); err != nil {
 			_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
 			return 1
 		}

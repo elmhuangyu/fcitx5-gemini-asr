@@ -7,12 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"os"
-	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"charm.land/huh/v2"
 )
 
 func cmdConfig(args []string, deps cliDeps) int {
@@ -675,219 +674,18 @@ func cmdConfigure(args []string, deps cliDeps) int {
 		return 2
 	}
 
-	if err := runConfigureWizard(*configPath, *fcitxPath, deps); err != nil {
+	if deps.runSetupForm == nil && !deps.isTTY() {
+		_, _ = fmt.Fprintln(deps.stderr, `error: configure requires an interactive terminal (use "gemini-voice config set <key> <value>" for non-interactive configuration)`)
+		return 1
+	}
+
+	if _, err := runSetupTUI(*configPath, *fcitxPath, setupFormOptions{IncludeAPIKey: false}, deps); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			_, _ = fmt.Fprintln(deps.stderr, "Configuration cancelled; no changes were saved.")
+			return 1
+		}
 		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
 		return 1
 	}
 	return 0
 }
-
-// readPromptLine reads one line from r byte-by-byte so unbuffered subsequent reads
-// (such as hidden password entry or stdin secrets) never lose buffered bytes.
-func readPromptLine(r io.Reader) (string, error) {
-	var buf [1]byte
-	var line strings.Builder
-	for {
-		n, err := r.Read(buf[:])
-		if n > 0 {
-			if buf[0] == '\n' {
-				return strings.TrimRight(line.String(), "\r"), nil
-			}
-			line.WriteByte(buf[0])
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) && line.Len() > 0 {
-				return strings.TrimRight(line.String(), "\r"), nil
-			}
-			return strings.TrimRight(line.String(), "\r"), err
-		}
-	}
-}
-
-func promptValue(r io.Reader, w io.Writer, label, defaultVal string) (string, error) {
-	if defaultVal != "" {
-		_, _ = fmt.Fprintf(w, "%s [%s]: ", label, defaultVal)
-	} else {
-		_, _ = fmt.Fprintf(w, "%s: ", label)
-	}
-	line, err := readPromptLine(r)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return "", err
-	}
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" {
-		return defaultVal, nil
-	}
-	return trimmed, nil
-}
-
-func runConfigureWizard(configPath, fcitxConfigPath string, deps cliDeps) error {
-	cfg, err := loadConfigOrDefault(configPath)
-	if err != nil {
-		return fmt.Errorf("load config %q: %w", configPath, err)
-	}
-	fcitxCfg, err := LoadFcitxAddonConfig(fcitxConfigPath)
-	if err != nil {
-		return err
-	}
-
-	_, _ = fmt.Fprintln(deps.stderr, "=== Fcitx5 Gemini Voice Configuration ===")
-
-	defaultMode := "1"
-	if !fcitxCfg.ShowActionMenu {
-		defaultMode = "2"
-	}
-	_, _ = fmt.Fprintln(deps.stderr, "Select input behavior after speech transcription:")
-	_, _ = fmt.Fprintln(deps.stderr, "  1) Action menu (choose Raw, Refine, Translate, or As Prompt)")
-	_, _ = fmt.Fprintln(deps.stderr, "  2) Direct commit (insert raw transcription immediately)")
-	for {
-		ans, pErr := promptValue(deps.stdin, deps.stderr, "Input mode (1 or 2)", defaultMode)
-		if pErr != nil {
-			return pErr
-		}
-		switch strings.ToLower(ans) {
-		case "1", "menu":
-			fcitxCfg.ShowActionMenu = true
-		case "2", "direct":
-			fcitxCfg.ShowActionMenu = false
-		default:
-			_, _ = fmt.Fprintln(deps.stderr, "Please enter 1 or 2.")
-			continue
-		}
-		break
-	}
-
-	lang, err := promptValue(deps.stdin, deps.stderr, "Transcription language (auto, cmn-Hans-CN, en-US, cmn-Hans-CN,en-US)", cfg.LiveTranscribe.Language)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(lang) != "" {
-		cfg.LiveTranscribe.Language = strings.TrimSpace(lang)
-	}
-
-	for {
-		vadStr, pErr := promptValue(deps.stdin, deps.stderr, "VAD silence auto-stop ms (0 disables)", strconv.Itoa(cfg.LiveTranscribe.VADSilenceMs))
-		if pErr != nil {
-			return pErr
-		}
-		vadMs, convErr := strconv.Atoi(strings.TrimSpace(vadStr))
-		if convErr != nil || vadMs < 0 {
-			_, _ = fmt.Fprintln(deps.stderr, "Please enter a non-negative integer.")
-			continue
-		}
-		cfg.LiveTranscribe.VADSilenceMs = vadMs
-		break
-	}
-
-	liveModel, err := promptValue(deps.stdin, deps.stderr, "Live transcription model", cfg.LiveTranscribe.Model)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(liveModel) != "" {
-		cfg.LiveTranscribe.Model = strings.TrimSpace(liveModel)
-	}
-
-	defaultPPModel, err := promptValue(deps.stdin, deps.stderr, "Default post-processing model (refine/translate/prompt)", cfg.PostProcess.Model)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(defaultPPModel) != "" {
-		cfg.PostProcess.Model = strings.TrimSpace(defaultPPModel)
-	}
-
-	overridePromptDefault := "N"
-	if len(cfg.PostProcess.Models) > 0 {
-		overridePromptDefault = "y"
-	}
-	overrideAns, err := promptValue(deps.stdin, deps.stderr, "Configure per-action model overrides? (y/N)", overridePromptDefault)
-	if err != nil {
-		return err
-	}
-	if strings.HasPrefix(strings.ToLower(overrideAns), "y") {
-		_, _ = fmt.Fprintln(deps.stderr, "Enter model name for each action (or 'default'/'-' to inherit default):")
-		for _, action := range cfg.EffectiveActionNames() {
-			cur := cfg.PostProcess.Models[action]
-			if cur == "" {
-				cur = "default (" + cfg.PostProcess.Model + ")"
-			}
-			val, pErr := promptValue(deps.stdin, deps.stderr, "  "+action, cur)
-			if pErr != nil {
-				return pErr
-			}
-			if val != cur {
-				setActionModelOverride(&cfg, action, val)
-			}
-		}
-	}
-
-	if fcitxCfg.ShowActionMenu {
-		curPrefetch := strings.Join(cfg.PostProcess.Prefetch, ",")
-		if curPrefetch == "" {
-			curPrefetch = "none"
-		}
-		for {
-			pfAns, pErr := promptValue(deps.stdin, deps.stderr, "Prefetch actions on stop (comma-separated, or 'none')", curPrefetch)
-			if pErr != nil {
-				return pErr
-			}
-			if _, _, setErr := setConfigKey(&cfg, &fcitxCfg, "post_process.prefetch", pfAns); setErr != nil {
-				_, _ = fmt.Fprintf(deps.stderr, "Invalid prefetch list: %v\n", setErr)
-				continue
-			}
-			break
-		}
-	}
-
-	for {
-		curTrig := strings.Join(fcitxCfg.TriggerKeys, ",")
-		trigAns, pErr := promptValue(deps.stdin, deps.stderr, "Fcitx5 trigger key(s) (comma-separated)", curTrig)
-		if pErr != nil {
-			return pErr
-		}
-		if _, _, setErr := setConfigKey(&cfg, &fcitxCfg, "ime.trigger_key", trigAns); setErr != nil {
-			_, _ = fmt.Fprintf(deps.stderr, "Invalid trigger key: %v\n", setErr)
-			continue
-		}
-		break
-	}
-
-	for {
-		curProxy := cfg.Connection.Proxy
-		if curProxy == "" {
-			curProxy = "none"
-		}
-		proxyAns, pErr := promptValue(deps.stdin, deps.stderr, "HTTP/SOCKS5 proxy URL (or 'none')", curProxy)
-		if pErr != nil {
-			return pErr
-		}
-		if proxyAns == "none" && cfg.Connection.Proxy == "" {
-			break
-		}
-		if _, _, setErr := setConfigKey(&cfg, &fcitxCfg, "connection.proxy", proxyAns); setErr != nil {
-			_, _ = fmt.Fprintf(deps.stderr, "Invalid proxy URL: %v\n", setErr)
-			continue
-		}
-		break
-	}
-
-	if err := SaveConfigFile(configPath, cfg); err != nil {
-		return fmt.Errorf("save daemon config %q: %w", configPath, err)
-	}
-	if err := SaveFcitxAddonConfig(fcitxConfigPath, fcitxCfg); err != nil {
-		return fmt.Errorf("save fcitx5 config %q: %w", fcitxConfigPath, err)
-	}
-	reloaded := ReloadFcitx5Config(context.Background(), deps)
-
-	_, _ = fmt.Fprintf(deps.stdout, "\nSaved daemon config: %s\n", configPath)
-	if reloaded {
-		_, _ = fmt.Fprintf(deps.stdout, "Saved Fcitx5 config: %s (reloaded Fcitx5)\n", fcitxConfigPath)
-	} else {
-		_, _ = fmt.Fprintf(deps.stdout, "Saved Fcitx5 config: %s\n", fcitxConfigPath)
-	}
-	return nil
-}
-
-// Keep unused import check clean if sort is used via EffectiveActionNames.
-var _ = sort.Strings
-var _ = filepath.Clean
-var _ = os.ErrNotExist

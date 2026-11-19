@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"charm.land/huh/v2"
 )
 
 func TestCLI_ConfigSetGetShow(t *testing.T) {
@@ -213,51 +215,17 @@ func TestCLI_ConfigureWizardAndInteractiveInit(t *testing.T) {
 	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
 	fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
 
-	// Wizard scripted input:
-	// 1) mode=1 (action menu)
-	// 2) language=en-US
-	// 3) vad=900
-	// 4) live model=gemini-3.5-transcribe-live
-	// 5) default pp model=gemini-2.5-flash
-	// 6) per-action overrides? y
-	//    refine_fix_typos -> gemini-2.5-flash-lite
-	//    refine_casual -> (enter = keep)
-	//    refine_formal -> gemini-2.5-pro
-	//    translate_en -> (enter = keep)
-	//    as_prompt -> gemini-2.5-pro
-	// 7) prefetch -> refine_fix_typos,as_prompt
-	// 8) trigger key -> Super+v
-	// 9) proxy -> http://127.0.0.1:7890
-	wizardInput := strings.Join([]string{
-		"1",
-		"en-US",
-		"900",
-		"gemini-3.5-transcribe-live",
-		"gemini-2.5-flash",
-		"y",
-		"gemini-2.5-flash-lite",
-		"",
-		"gemini-2.5-pro",
-		"",
-		"gemini-2.5-pro",
-		"refine_fix_typos,as_prompt",
-		"Super+v",
-		"http://127.0.0.1:7890",
-		"",
-	}, "\n")
-
 	var stdout, stderr bytes.Buffer
 	var encryptedSecret string
+	var encryptCalls int
 	deps := cliDeps{
-		stdin:  strings.NewReader(wizardInput),
+		stdin:  strings.NewReader(""),
 		stdout: &stdout,
 		stderr: &stderr,
 		isTTY:  func() bool { return true },
-		readPassword: func() (string, error) {
-			return "AIzaSyWizardKey5555", nil
-		},
 		runCmd: func(ctx context.Context, stdin string, name string, args ...string) cmdResult {
 			if name == "systemd-creds" && len(args) > 0 && args[0] == "encrypt" {
+				encryptCalls++
 				encryptedSecret = stdin
 				outFile := args[len(args)-1]
 				if err := os.WriteFile(outFile, []byte("ENC"), 0o600); err != nil {
@@ -273,6 +241,33 @@ func TestCLI_ConfigureWizardAndInteractiveInit(t *testing.T) {
 		lookPath: func(file string) (string, error) { return "/usr/bin/" + file, nil },
 		getenv:   func(string) string { return "" },
 		serveFn:  func(string, string) int { return 0 },
+		runSetupForm: func(state *setupFormState, opts setupFormOptions) error {
+			if !opts.IncludeAPIKey || opts.CredExists {
+				t.Fatalf("unexpected init setup opts: %+v", opts)
+			}
+			state.showActionMenu = true
+			state.language = "en-US"
+			state.liveMode = "SMART"
+			state.vadSilenceMs = "900"
+			state.liveModel = "gemini-3.5-transcribe-live"
+			state.postProcessModel = "gemini-2.5-flash"
+			state.configureOverrides = true
+			for i, a := range state.actionOrder {
+				switch a {
+				case "refine_fix_typos":
+					state.actionOverrides[i] = "gemini-2.5-flash-lite"
+				case "refine_formal", "as_prompt":
+					state.actionOverrides[i] = "gemini-2.5-pro"
+				}
+			}
+			state.prefetch = []string{"refine_fix_typos", "as_prompt"}
+			state.customVocabulary = "Fcitx5, PipeWire"
+			state.triggerKeys = "Super+v"
+			state.proxy = "http://127.0.0.1:7890"
+			state.overwriteKey = true
+			state.apiKey = "AIzaSyWizardKey5555"
+			return nil
+		},
 	}
 
 	if code := runCLI("gemini-voice", []string{"init", "-config", cfgPath, "-fcitx-config", fcitxPath}, deps); code != 0 {
@@ -283,8 +278,11 @@ func TestCLI_ConfigureWizardAndInteractiveInit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LiveTranscribe.Language != "en-US" || cfg.LiveTranscribe.VADSilenceMs != 900 {
+	if cfg.LiveTranscribe.Language != "en-US" || cfg.LiveTranscribe.Mode != "SMART" || cfg.LiveTranscribe.VADSilenceMs != 900 {
 		t.Fatalf("unexpected live config: %+v", cfg.LiveTranscribe)
+	}
+	if !reflect.DeepEqual(cfg.LiveTranscribe.CustomVocabulary, []string{"Fcitx5", "PipeWire"}) {
+		t.Fatalf("unexpected custom_vocabulary: %+v", cfg.LiveTranscribe.CustomVocabulary)
 	}
 	if cfg.ModelForAction("refine_fix_typos") != "gemini-2.5-flash-lite" ||
 		cfg.ModelForAction("refine_formal") != "gemini-2.5-pro" ||
@@ -306,14 +304,62 @@ func TestCLI_ConfigureWizardAndInteractiveInit(t *testing.T) {
 	if !fcitxCfg.ShowActionMenu || !reflect.DeepEqual(fcitxCfg.TriggerKeys, []string{"Super+v"}) {
 		t.Fatalf("unexpected fcitx config: %+v", fcitxCfg)
 	}
-	if encryptedSecret != "AIzaSyWizardKey5555" {
-		t.Fatalf("unexpected encrypted secret %q", encryptedSecret)
+	if encryptedSecret != "AIzaSyWizardKey5555" || encryptCalls != 1 {
+		t.Fatalf("unexpected encrypted secret %q calls=%d", encryptedSecret, encryptCalls)
 	}
 
-	// Also verify standalone `configure` updates to direct commit mode.
+	// Second init when credential exists and user chooses to keep existing credential.
 	stdout.Reset()
 	stderr.Reset()
-	deps.stdin = strings.NewReader("2\n\n\n\n\nN\n\nnone\n")
+	deps.runSetupForm = func(state *setupFormState, opts setupFormOptions) error {
+		if !opts.CredExists {
+			t.Fatal("expected CredExists=true on second init")
+		}
+		if state.overwriteKey {
+			t.Fatal("expected overwriteKey default false when credential exists")
+		}
+		return nil
+	}
+	if code := runCLI("gemini-voice", []string{"init", "-config", cfgPath, "-fcitx-config", fcitxPath}, deps); code != 0 {
+		t.Fatalf("second interactive init exit=%d stderr=%s", code, stderr.String())
+	}
+	if encryptCalls != 1 || !strings.Contains(stdout.String(), "Keeping existing credential") {
+		t.Fatalf("expected existing credential preserved without re-encrypting; calls=%d stdout=%s", encryptCalls, stdout.String())
+	}
+
+	// Aborting TUI init must exit non-zero and leave existing config intact.
+	beforeAbort, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	deps.runSetupForm = func(state *setupFormState, opts setupFormOptions) error {
+		state.language = "fr-FR"
+		return huh.ErrUserAborted
+	}
+	if code := runCLI("gemini-voice", []string{"init", "-config", cfgPath, "-fcitx-config", fcitxPath}, deps); code != 1 {
+		t.Fatalf("expected exit 1 on abort, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "Setup cancelled") {
+		t.Fatalf("expected cancellation message, got %q", stderr.String())
+	}
+	afterAbort, err := os.ReadFile(cfgPath)
+	if err != nil || string(afterAbort) != string(beforeAbort) {
+		t.Fatalf("aborted init modified config.toml")
+	}
+
+	// Standalone `configure` updates to direct commit mode without touching API key.
+	stdout.Reset()
+	stderr.Reset()
+	deps.runSetupForm = func(state *setupFormState, opts setupFormOptions) error {
+		if opts.IncludeAPIKey {
+			t.Fatal("configure should not prompt for API key")
+		}
+		state.showActionMenu = false
+		state.proxy = "none"
+		return nil
+	}
 	if code := runCLI("gemini-voice", []string{"configure", "-config", cfgPath, "-fcitx-config", fcitxPath}, deps); code != 0 {
 		t.Fatalf("configure exit=%d stderr=%s", code, stderr.String())
 	}
@@ -323,5 +369,17 @@ func TestCLI_ConfigureWizardAndInteractiveInit(t *testing.T) {
 	}
 	if fcitxCfg2.ShowActionMenu {
 		t.Fatal("expected ShowActionMenu=false after selecting direct mode in configure")
+	}
+
+	// Non-TTY configure fails clearly.
+	stdout.Reset()
+	stderr.Reset()
+	deps.runSetupForm = nil
+	deps.isTTY = func() bool { return false }
+	if code := runCLI("gemini-voice", []string{"configure", "-config", cfgPath, "-fcitx-config", fcitxPath}, deps); code != 1 {
+		t.Fatalf("expected exit 1 for non-TTY configure, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "gemini-voice config set") {
+		t.Fatalf("expected config set hint in non-TTY stderr: %q", stderr.String())
 	}
 }
