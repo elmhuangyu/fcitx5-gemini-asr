@@ -23,11 +23,12 @@ import (
 )
 
 const (
-	DefaultVADThreshold = 300.0
-	DefaultLiveModel    = "gemini-3.5-transcribe-live"
-	DefaultLiveLanguage = "auto"
-	DefaultLiveMode     = "VERBATIM"
-	MaxCustomVocabulary = 1000
+	DefaultVADThreshold     = 300.0
+	DefaultLiveModel        = "gemini-3.5-transcribe-live"
+	DefaultPostProcessModel = "gemini-3.5-flash-lite"
+	DefaultLiveLanguage     = "auto"
+	DefaultLiveMode         = "VERBATIM"
+	MaxCustomVocabulary     = 1000
 )
 
 // KnownActions lists built-in post-processing action keys in menu display order.
@@ -84,7 +85,7 @@ func DefaultConfig() Config {
 			VADThreshold: DefaultVADThreshold,
 		},
 		PostProcess: PostProcessConfig{
-			Model:    "gemini-2.5-flash",
+			Model:    DefaultPostProcessModel,
 			Prefetch: []string{"refine_fix_typos", "refine_formal"},
 		},
 		Prompts: map[string]string{
@@ -112,7 +113,7 @@ mode = "VERBATIM"        # "VERBATIM" (literal) or "SMART" (disfluency cleanup &
 vad_silence_ms = 1200
 
 [post_process]
-model = "gemini-2.5-flash"
+model = "gemini-3.5-flash-lite"
 prefetch = ["refine_fix_typos", "refine_formal"]
 
 [post_process.models]
@@ -198,7 +199,7 @@ func (c Config) ModelForAction(action string) string {
 	if m := strings.TrimSpace(c.PostProcess.Model); m != "" {
 		return m
 	}
-	return "gemini-2.5-flash"
+	return DefaultPostProcessModel
 }
 
 // EffectiveActionNames returns KnownActions followed by any extra sorted prompt keys.
@@ -295,7 +296,7 @@ func LoadConfigFile(path string) (Config, error) {
 		cfg.LiveTranscribe.VADThreshold = DefaultVADThreshold
 	}
 	if strings.TrimSpace(cfg.PostProcess.Model) == "" {
-		cfg.PostProcess.Model = "gemini-2.5-flash"
+		cfg.PostProcess.Model = DefaultPostProcessModel
 	}
 	return cfg, nil
 }

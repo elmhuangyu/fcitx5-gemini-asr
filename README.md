@@ -99,7 +99,7 @@ gemini-voice models
 gemini-voice models --remote
 
 # Choose models for live ASR, default post-processing, and individual actions:
-gemini-voice models --live gemini-3.5-transcribe-live --default gemini-2.5-flash --refine-formal gemini-2.5-pro --as-prompt gemini-2.5-pro
+gemini-voice models --live gemini-3.5-transcribe-live --default gemini-3.5-flash-lite --refine-formal gemini-2.5-pro --as-prompt gemini-2.5-pro
 gemini-voice config set model.refine_fix_typos gemini-2.5-flash-lite
 gemini-voice config set model.refine_formal default   # Clear override and inherit post_process.model
 

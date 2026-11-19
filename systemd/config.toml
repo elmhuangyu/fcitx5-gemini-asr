@@ -11,7 +11,7 @@ mode = "VERBATIM"        # "VERBATIM" (literal) or "SMART" (disfluency cleanup &
 vad_silence_ms = 1200
 
 [post_process]
-model = "gemini-2.5-flash"
+model = "gemini-3.5-flash-lite"
 prefetch = ["refine_fix_typos", "refine_formal"]
 
 [post_process.models]

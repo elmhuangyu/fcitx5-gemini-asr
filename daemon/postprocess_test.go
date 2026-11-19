@@ -24,7 +24,7 @@ func TestPostProcessor_GenerateAndPrefetch(t *testing.T) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if !strings.HasSuffix(r.URL.Path, "/v1beta/models/gemini-2.5-flash:generateContent") {
+		if !strings.HasSuffix(r.URL.Path, "/v1beta/models/gemini-3.5-flash-lite:generateContent") {
 			http.Error(w, "wrong path: "+r.URL.Path, http.StatusNotFound)
 			return
 		}

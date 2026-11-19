@@ -66,7 +66,7 @@ func newSetupFormState(cfg Config, fcitxCfg FcitxAddonConfig, opts setupFormOpti
 
 	ppModel := strings.TrimSpace(cfg.PostProcess.Model)
 	if ppModel == "" {
-		ppModel = "gemini-2.5-flash"
+		ppModel = DefaultPostProcessModel
 	}
 
 	return &setupFormState{
@@ -162,7 +162,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 			huh.NewInput().
 				Title("Default post-processing model").
 				Description("Used for Refine / Translate / As Prompt unless overridden per action.").
-				Suggestions([]string{"gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"}).
+				Suggestions([]string{DefaultPostProcessModel, "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"}).
 				Value(&state.postProcessModel).
 				Validate(validateNonEmpty("post_process.model")),
 
@@ -182,7 +182,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 			huh.NewInput().
 				Title(action).
 				Placeholder("default (inherit "+state.postProcessModel+")").
-				Suggestions([]string{"gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"}).
+				Suggestions([]string{DefaultPostProcessModel, "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"}).
 				Value(&state.actionOverrides[idx]),
 		)
 	}

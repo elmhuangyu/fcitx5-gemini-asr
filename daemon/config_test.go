@@ -26,7 +26,7 @@ func TestConfigLoadSystemdTemplate(t *testing.T) {
 	if cfg.LiveTranscribe.VADSilenceMs != 1200 {
 		t.Fatalf("unexpected vad_silence_ms: %d", cfg.LiveTranscribe.VADSilenceMs)
 	}
-	if cfg.PostProcess.Model != "gemini-2.5-flash" {
+	if cfg.PostProcess.Model != "gemini-3.5-flash-lite" {
 		t.Fatalf("unexpected post_process model: %q", cfg.PostProcess.Model)
 	}
 	if len(cfg.PostProcess.Prefetch) != 2 {
