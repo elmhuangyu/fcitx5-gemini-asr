@@ -404,3 +404,152 @@ func (b *blockingAudioSource) Close() error {
 	})
 	return nil
 }
+
+func TestSocketServer_ShutdownClosesPersistentClient(t *testing.T) {
+	t.Run("idle_client", func(t *testing.T) {
+		sockPath, cancel, errCh := startTestSocketServer(t, &fakeTranscriber{mode: "slow"}, newFakePostProcessor())
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		scanner := bufio.NewScanner(conn)
+
+		// Round-trip one command so the server has accepted and is parked in scanner.Scan().
+		sendCmd(t, conn, ClientCommand{Cmd: "cancel"})
+		if ev := readEvent(t, scanner); ev.Event != "state_changed" || ev.State != "idle" {
+			cancel()
+			t.Fatalf("expected idle state, got %+v", ev)
+		}
+
+		// Cancel server context WITHOUT closing client conn.
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("server exit err: %v", err)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatal("server shutdown timed out with persistent idle client connected")
+		}
+	})
+
+	t.Run("mid_recording", func(t *testing.T) {
+		sockPath, cancel, errCh := startTestSocketServer(t, &fakeTranscriber{mode: "slow"}, newFakePostProcessor())
+		conn, err := net.Dial("unix", sockPath)
+		if err != nil {
+			cancel()
+			t.Fatal(err)
+		}
+		defer func() { _ = conn.Close() }()
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		scanner := bufio.NewScanner(conn)
+
+		sendCmd(t, conn, ClientCommand{Cmd: "start_recording"})
+		if ev := readEvent(t, scanner); ev.Event != "state_changed" || ev.State != "recording" {
+			cancel()
+			t.Fatalf("expected recording state, got %+v", ev)
+		}
+		if ev := readEvent(t, scanner); ev.Event != "partial_text" {
+			cancel()
+			t.Fatalf("expected partial_text, got %+v", ev)
+		}
+
+		// Cancel server context mid-recording WITHOUT closing client conn.
+		cancel()
+		select {
+		case err := <-errCh:
+			if err != nil {
+				t.Fatalf("server exit err: %v", err)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatal("server shutdown timed out mid-recording with persistent client connected")
+		}
+	})
+}
+
+func TestSocketServer_StalledClientWriteDeadline(t *testing.T) {
+	t.Run("sendUnchecked_net_pipe", func(t *testing.T) {
+		serverConn, clientConn := net.Pipe()
+		defer func() { _ = serverConn.Close() }()
+		defer func() { _ = clientConn.Close() }()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var cancelled atomic.Bool
+
+		cs := &clientSession{
+			server: &SocketServer{
+				deps: SocketServerDeps{
+					WriteTimeout: 50 * time.Millisecond,
+				},
+			},
+			conn:    serverConn,
+			baseCtx: ctx,
+			cancelConn: func() {
+				cancelled.Store(true)
+				cancel()
+				_ = serverConn.Close()
+			},
+		}
+
+		start := time.Now()
+		cs.sendUnchecked(ServerEvent{Event: "state_changed", State: "recording"})
+		elapsed := time.Since(start)
+
+		if elapsed >= 500*time.Millisecond {
+			t.Fatalf("sendUnchecked blocked too long on unread pipe: %v", elapsed)
+		}
+		if !cancelled.Load() {
+			t.Fatal("expected cancelConn to be invoked on write timeout")
+		}
+	})
+
+	t.Run("handleConnection_stalled_peer", func(t *testing.T) {
+		dir := t.TempDir()
+		cfgMgr, err := NewConfigManager(filepath.Join(dir, "config.toml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var audioClosed atomic.Bool
+		srv := NewSocketServer(filepath.Join(dir, "unused.sock"), SocketServerDeps{
+			ConfigManager: cfgMgr,
+			KeyLoader: func(credName, fallbackEnv string) (string, error) {
+				return "dummy-key", nil
+			},
+			AudioFactory: func(ctx context.Context) (AudioSource, error) {
+				return &testAudioTracker{closed: &audioClosed}, nil
+			},
+			Transcriber:  &fakeTranscriber{mode: "slow"},
+			WriteTimeout: 50 * time.Millisecond,
+		})
+
+		serverConn, clientConn := net.Pipe()
+		defer func() { _ = clientConn.Close() }()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		handleDone := make(chan struct{})
+		go func() {
+			defer close(handleDone)
+			srv.handleConnection(ctx, serverConn)
+		}()
+
+		_ = clientConn.SetWriteDeadline(time.Now().Add(500 * time.Millisecond))
+		sendCmd(t, clientConn, ClientCommand{Cmd: "start_recording"})
+
+		// Never read from clientConn so serverConn.Write stalls and hits WriteTimeout.
+		select {
+		case <-handleDone:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatal("handleConnection did not close stalled client within 500ms")
+		}
+		if !audioClosed.Load() {
+			t.Fatal("expected audio source to close when stalled client connection closed")
+		}
+	})
+}

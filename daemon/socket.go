@@ -13,7 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
+
+const defaultSocketWriteTimeout = 5 * time.Second
 
 type ClientCommand struct {
 	Cmd      string `json:"cmd"`
@@ -42,6 +45,7 @@ type SocketServerDeps struct {
 	AudioFactory  AudioFactory
 	Transcriber   LiveTranscriber
 	PostProcessor PostProcessRunner
+	WriteTimeout  time.Duration
 }
 
 type SocketServer struct {
@@ -63,6 +67,9 @@ func NewSocketServer(socketPath string, deps SocketServerDeps) *SocketServer {
 	}
 	if deps.PostProcessor == nil {
 		deps.PostProcessor = NewPostProcessor()
+	}
+	if deps.WriteTimeout <= 0 {
+		deps.WriteTimeout = defaultSocketWriteTimeout
 	}
 	return &SocketServer{
 		socketPath: filepath.Clean(socketPath),
@@ -139,18 +146,34 @@ func (s *SocketServer) ServeListener(ctx context.Context, ln net.Listener) error
 }
 
 func (s *SocketServer) handleConnection(parentCtx context.Context, conn net.Conn) {
-	defer func() { _ = conn.Close() }()
+	var closeConnOnce sync.Once
+	closeConn := func() {
+		closeConnOnce.Do(func() {
+			_ = conn.Close()
+		})
+	}
 
 	connCtx, cancelConn := context.WithCancel(parentCtx)
-	defer cancelConn()
+	closeWatcherDone := make(chan struct{})
+	go func() {
+		defer close(closeWatcherDone)
+		<-connCtx.Done()
+		closeConn()
+	}()
 
 	cs := &clientSession{
-		server:   s,
-		conn:     conn,
-		baseCtx:  connCtx,
-		prefetch: NewPrefetchSession(),
+		server:     s,
+		conn:       conn,
+		baseCtx:    connCtx,
+		cancelConn: cancelConn,
+		prefetch:   NewPrefetchSession(),
 	}
+	defer closeConn()
 	defer cs.shutdown()
+	defer func() {
+		cancelConn()
+		<-closeWatcherDone
+	}()
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
@@ -175,9 +198,10 @@ func (s *SocketServer) handleConnection(parentCtx context.Context, conn net.Conn
 }
 
 type clientSession struct {
-	server  *SocketServer
-	conn    net.Conn
-	baseCtx context.Context
+	server     *SocketServer
+	conn       net.Conn
+	baseCtx    context.Context
+	cancelConn context.CancelFunc
 
 	writeMu sync.Mutex
 
@@ -234,7 +258,22 @@ func (cs *clientSession) sendUnchecked(ev ServerEvent) {
 
 	cs.writeMu.Lock()
 	defer cs.writeMu.Unlock()
-	_, _ = cs.conn.Write(buf.Bytes())
+	var timeout time.Duration
+	if cs.server != nil {
+		timeout = cs.server.deps.WriteTimeout
+	}
+	if timeout <= 0 {
+		timeout = defaultSocketWriteTimeout
+	}
+	_ = cs.conn.SetWriteDeadline(time.Now().Add(timeout))
+	if _, err := cs.conn.Write(buf.Bytes()); err != nil {
+		if cs.baseCtx == nil || cs.baseCtx.Err() == nil {
+			log.Printf("socket client write error (closing connection): %v", err)
+		}
+		if cs.cancelConn != nil {
+			cs.cancelConn()
+		}
+	}
 }
 
 func (cs *clientSession) dispatch(cmd ClientCommand) {
