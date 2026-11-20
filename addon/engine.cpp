@@ -34,6 +34,10 @@ public:
         }
     }
 
+    void applyCustomLabel(fcitx::Text label) {
+        setCustomLabel(std::move(label));
+    }
+
     void select(fcitx::InputContext *ic) const override {
         if (cb_) {
             cb_(ic);
@@ -43,6 +47,11 @@ public:
 private:
     Callback cb_;
 };
+
+bool isHeaderAtPageStart(const fcitx::CandidateList &candList) {
+    return candList.size() > 0 && candList.candidate(0).hasCustomLabel() &&
+           candList.candidate(0).customLabel().empty();
+}
 
 fcitx::KeyList defaultSelectionKeys() {
     return {
@@ -385,10 +394,7 @@ void GeminiVoiceEngine::handleActionMenuKey(fcitx::InputContext *ic,
     }
 
     if (key.check(FcitxKey_Right)) {
-        const bool hasHeader = candList->size() > 0 &&
-                               candList->candidate(0).hasCustomLabel() &&
-                               candList->candidate(0).customLabel().empty();
-        const int translateIdx = (hasHeader ? 1 : 0) + 2;
+        const int translateIdx = (isHeaderAtPageStart(*candList) ? 1 : 0) + 2;
         if (candList->cursorIndex() == translateIdx &&
             effectiveTranslateTargets().size() > 1) {
             showTranslateSubmenu(ic);
@@ -426,10 +432,7 @@ void GeminiVoiceEngine::handleSubmenuKey(fcitx::InputContext *ic,
 bool GeminiVoiceEngine::handleCandidateMenuKey(fcitx::InputContext *ic,
                                                fcitx::CandidateList &candList,
                                                const fcitx::Key &key) {
-    const bool hasHeader = candList.size() > 0 &&
-                           candList.candidate(0).hasCustomLabel() &&
-                           candList.candidate(0).customLabel().empty();
-    const int minIdx = hasHeader ? 1 : 0;
+    const int minIdx = isHeaderAtPageStart(candList) ? 1 : 0;
 
     int digit = key.digitSelection();
     if (digit >= 0) {
@@ -452,7 +455,7 @@ bool GeminiVoiceEngine::handleCandidateMenuKey(fcitx::InputContext *ic,
     if (key.check(FcitxKey_Up)) {
         if (auto *movable = candList.toCursorMovable()) {
             movable->prevCandidate();
-            if (hasHeader && candList.cursorIndex() == 0) {
+            if (isHeaderAtPageStart(candList) && candList.cursorIndex() == 0) {
                 movable->prevCandidate();
             }
             ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -463,8 +466,36 @@ bool GeminiVoiceEngine::handleCandidateMenuKey(fcitx::InputContext *ic,
     if (key.check(FcitxKey_Down)) {
         if (auto *movable = candList.toCursorMovable()) {
             movable->nextCandidate();
-            if (hasHeader && candList.cursorIndex() == 0) {
+            if (isHeaderAtPageStart(candList) && candList.cursorIndex() == 0) {
                 movable->nextCandidate();
+            }
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+        }
+        return true;
+    }
+
+    if (key.check(FcitxKey_Page_Down)) {
+        if (auto *pageable = candList.toPageable();
+            pageable && pageable->hasNext()) {
+            pageable->next();
+            if (isHeaderAtPageStart(candList) && candList.cursorIndex() == 0) {
+                if (auto *movable = candList.toCursorMovable()) {
+                    movable->nextCandidate();
+                }
+            }
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+        }
+        return true;
+    }
+
+    if (key.check(FcitxKey_Page_Up)) {
+        if (auto *pageable = candList.toPageable();
+            pageable && pageable->hasPrev()) {
+            pageable->prev();
+            if (isHeaderAtPageStart(candList) && candList.cursorIndex() == 0) {
+                if (auto *movable = candList.toCursorMovable()) {
+                    movable->nextCandidate();
+                }
             }
             ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
         }
@@ -713,13 +744,17 @@ void GeminiVoiceEngine::applyMenuPanel(
         list->insert(0, std::make_unique<ActionCandidateWord>(
                             buildMultilineDisplayText(wrapped),
                             ActionCandidateWord::Callback{}, true));
-        std::vector<std::string> labels;
-        labels.reserve(static_cast<size_t>(actionCount) + 1);
-        labels.emplace_back("");
+        const int pageSize = list->pageSize();
         for (int i = 1; i <= actionCount; ++i) {
-            labels.push_back(std::to_string(i) + ". ");
+            const int labelNum =
+                (pageSize > 0 && i >= pageSize) ? ((i % pageSize) + 1) : i;
+            if (auto *word = dynamic_cast<ActionCandidateWord *>(
+                    const_cast<fcitx::CandidateWord *>(
+                        &list->candidateFromAll(i)))) {
+                word->applyCustomLabel(
+                    fcitx::Text(std::to_string(labelNum) + ". "));
+            }
         }
-        list->setLabels(labels);
         list->setGlobalCursorIndex(1);
     } else {
         list->setGlobalCursorIndex(0);

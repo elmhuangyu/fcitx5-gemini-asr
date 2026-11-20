@@ -789,7 +789,8 @@ int main() {
                        ic->inputPanel().auxDown().empty() &&
                        cl->candidate(0).hasCustomLabel() &&
                        cl->candidate(0).customLabel().empty() &&
-                       cl->label(1).toString() == "1. " &&
+                       cl->candidate(1).hasCustomLabel() &&
+                       cl->candidate(1).customLabel().toString() == "1. " &&
                        cl->candidate(0).text().toString() ==
                            "一二三四五\n六七八九十\n十一十二十\n三十四十五" &&
                        cl->cursorIndex() == 1;
@@ -816,6 +817,119 @@ int main() {
                 REQUIRE(ic->committed[7] ==
                         "一二三四五六七八九十十一十二十三十四十五");
             });
+
+            // 7c. Paginated Translate submenu (>= 9 targets, multiline header)
+            {
+                const std::string twelveTargetsJson =
+                    R"({"event":"transcribe_done","raw_text":"一二三四五六七八九十十一十二十三十四十五","translate_targets":[)"
+                    R"({"action":"translate_en","label":"English"},)"
+                    R"({"action":"translate_zh","label":"Chinese"},)"
+                    R"({"action":"translate_ja","label":"Japanese"},)"
+                    R"({"action":"translate_ko","label":"Korean"},)"
+                    R"({"action":"translate_fr","label":"French"},)"
+                    R"({"action":"translate_de","label":"German"},)"
+                    R"({"action":"translate_es","label":"Spanish"},)"
+                    R"({"action":"translate_pt","label":"Portuguese"},)"
+                    R"({"action":"translate_ru","label":"Russian"},)"
+                    R"({"action":"translate_it","label":"Italian"},)"
+                    R"({"action":"translate_ar","label":"Arabic"},)"
+                    R"({"action":"translate_vi","label":"Vietnamese"}]})";
+
+                runOnMain(instance, [&]() {
+                    sendKey(ic.get(), fcitx::Key("Alt+space"));
+                });
+                daemon.waitForCommand(cmdIdx++);
+                runOnMain(instance, [&]() {
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
+                });
+                daemon.waitForCommand(cmdIdx++);
+                daemon.sendEvent(twelveTargetsJson);
+                REQUIRE(waitOnMain(instance, [&]() {
+                    auto cl = ic->inputPanel().candidateList();
+                    return cl && cl->size() == 5;
+                }));
+                runOnMain(instance, [&]() {
+                    // Open Translate submenu ('3')
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_3));
+                    auto cl = ic->inputPanel().candidateList();
+                    REQUIRE(cl != nullptr);
+                    auto *pageable = cl->toPageable();
+                    REQUIRE(pageable != nullptr);
+                    REQUIRE(pageable->totalPages() == 2);
+                    REQUIRE(pageable->currentPage() == 0);
+                    REQUIRE(cl->size() == 9);
+                    REQUIRE(cl->cursorIndex() == 1);
+                    REQUIRE(cl->candidate(0).hasCustomLabel());
+                    REQUIRE(cl->candidate(0).customLabel().empty());
+                    REQUIRE(cl->candidate(1).customLabel().toString() == "1. ");
+                    REQUIRE(cl->candidate(8).customLabel().toString() == "8. ");
+
+                    // Navigate Down across page boundary: must land on item 9
+                    // (Russian, page 1 index 0) without skipping it.
+                    for (int step = 0; step < 8; ++step) {
+                        sendKey(ic.get(), fcitx::Key(FcitxKey_Down));
+                    }
+                    REQUIRE(pageable->currentPage() == 1);
+                    REQUIRE(cl->size() == 4);
+                    REQUIRE(cl->cursorIndex() == 0);
+                    REQUIRE(cl->candidate(0).text().toString() == "Russian");
+                    REQUIRE(cl->candidate(0).customLabel().toString() == "1. ");
+                    REQUIRE(cl->candidate(3).customLabel().toString() == "4. ");
+
+                    // Up from page 1 index 0 returns to page 0 index 8.
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Up));
+                    REQUIRE(pageable->currentPage() == 0);
+                    REQUIRE(cl->cursorIndex() == 8);
+
+                    // Down back to page 1 index 0, then Return selects Russian.
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Down));
+                    REQUIRE(pageable->currentPage() == 1);
+                    REQUIRE(cl->cursorIndex() == 0);
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
+                });
+                {
+                    auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                        daemon.waitForCommand(cmdIdx++));
+                    REQUIRE(cmd && (*cmd)["cmd"] == "post_process" &&
+                            (*cmd)["action"] == "translate_ru");
+                }
+                daemon.sendEvent(R"({"event":"final_result","text":"Привет"})");
+                REQUIRE(waitOnMain(instance,
+                                   [&]() { return ic->committed.size() == 9; }));
+                REQUIRE(ic->committed[8] == "Привет");
+
+                // Test digit selection on page 2 (Page_Down + '2' -> Italian)
+                runOnMain(instance, [&]() {
+                    sendKey(ic.get(), fcitx::Key("Alt+space"));
+                });
+                daemon.waitForCommand(cmdIdx++);
+                runOnMain(instance, [&]() {
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
+                });
+                daemon.waitForCommand(cmdIdx++);
+                daemon.sendEvent(twelveTargetsJson);
+                REQUIRE(waitOnMain(instance, [&]() {
+                    auto cl = ic->inputPanel().candidateList();
+                    return cl && cl->size() == 5;
+                }));
+                runOnMain(instance, [&]() {
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_3));
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Page_Down));
+                    auto cl = ic->inputPanel().candidateList();
+                    REQUIRE(cl && cl->toPageable()->currentPage() == 1);
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_2));
+                });
+                {
+                    auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                        daemon.waitForCommand(cmdIdx++));
+                    REQUIRE(cmd && (*cmd)["cmd"] == "post_process" &&
+                            (*cmd)["action"] == "translate_it");
+                }
+                daemon.sendEvent(R"({"event":"final_result","text":"Ciao"})");
+                REQUIRE(waitOnMain(instance,
+                                   [&]() { return ic->committed.size() == 10; }));
+                REQUIRE(ic->committed[9] == "Ciao");
+            }
 
             // 8. Unload safety: capture CandidateList before engine teardown
             runOnMain(instance, [&]() {
