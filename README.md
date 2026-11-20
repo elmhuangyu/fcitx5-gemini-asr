@@ -139,7 +139,7 @@ GEMINI_API_KEY="your-key" ~/.local/bin/gemini-voice-daemon
 
 ## Usage & Hotkeys
 
-1. Enable the **Gemini Voice** module in Fcitx5 (no need to switch away from your current input method such as Rime or `keyboard-us`; since installation targets `~/.local`, ensure `FCITX_ADDON_DIRS` includes `~/.local/lib/fcitx5`, e.g. in `~/.config/environment.d/fcitx5.conf`).
+1. Enable the **Gemini Voice** module in Fcitx5 (no need to switch away from your current input method such as Rime or `keyboard-us`).
 2. Press **`Alt+space`** (configurable via `gemini-voice config set ime.trigger_key ...` or `fcitx5-configtool`) in any input method to start recording. Live transcription streams inside Fcitx5's floating candidate panel (`AuxUp` / `Preedit`) without modifying the application's input box until committed.
 3. Press **`Alt+space`** or **`Return`** (or pause for `vad_silence_ms`) to stop recording:
    - In **`menu`** mode (`ShowActionMenu = True`), the Rime-style action menu opens:

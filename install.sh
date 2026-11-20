@@ -8,8 +8,9 @@ usage() {
     cat <<'EOF'
 Usage: ./install.sh [--build-only]
 
-Default behavior installs the Fcitx5 addon into ~/.local (no sudo), installs
-the Go daemon/CLI to ~/.local/bin, and sets up systemd user files.
+Default behavior installs the Fcitx5 addon to Fcitx5's default prefix (via sudo
+if needed), installs the Go daemon/CLI to ~/.local/bin, and sets up systemd
+user files.
 
 Options:
   --build-only  Compile C++ addon & Go daemon/CLI and run all test suites without
@@ -53,7 +54,7 @@ echo "==> [1/4] Building & testing Go daemon and CLI..."
     ln -sfn gemini-voice-daemon "${ROOT_DIR}/daemon/gemini-voice"
 )
 
-CMAKE_PREFIX="$HOME/.local"
+CMAKE_PREFIX="$(pkg-config --variable=prefix Fcitx5Core 2>/dev/null || echo /usr)"
 
 echo "==> [2/4] Building & testing Fcitx5 C++ addon (prefix: ${CMAKE_PREFIX})..."
 cmake -S "${ROOT_DIR}/addon" -B "${ROOT_DIR}/addon/build" \
@@ -68,8 +69,15 @@ if [[ "${BUILD_ONLY}" == "true" ]]; then
     exit 0
 fi
 
-echo "==> [3/4] Installing Fcitx5 addon..."
-cmake --install "${ROOT_DIR}/addon/build"
+echo "==> [3/4] Installing Fcitx5 addon (prefix: ${CMAKE_PREFIX})..."
+if [[ -w "${CMAKE_PREFIX}" ]]; then
+    cmake --install "${ROOT_DIR}/addon/build"
+else
+    sudo cmake --install "${ROOT_DIR}/addon/build"
+fi
+rm -f "$HOME/.local/lib/fcitx5/libgemini-voice.so" \
+      "$HOME/.local/share/fcitx5/addon/gemini-voice.conf" \
+      "$HOME/.local/share/locale/zh_CN/LC_MESSAGES/fcitx5-gemini-voice.mo"
 
 echo "==> [4/4] Installing Go daemon/CLI, config, and systemd user service..."
 mkdir -p "$HOME/.local/bin" "$HOME/.config/gemini-voice" "$HOME/.config/systemd/user"
@@ -100,9 +108,5 @@ Installation complete! Next steps:
 2. Enable and start the background daemon:
    systemctl --user enable --now gemini-voice.service
 
-3. Restart Fcitx5 and add "Gemini Voice" in fcitx5-configtool.
-
-Note: ensure Fcitx5 discovers ~/.local addons and data dirs, e.g.:
-   FCITX_ADDON_DIRS="$HOME/.local/lib/fcitx5:/usr/lib/fcitx5"
-   XDG_DATA_DIRS="$HOME/.local/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+3. Restart Fcitx5 (e.g. `fcitx5 -r -d`) and enable "Gemini Voice" in fcitx5-configtool.
 EOF
