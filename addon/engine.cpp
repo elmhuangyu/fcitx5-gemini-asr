@@ -61,6 +61,95 @@ std::string truncateUtf8(const std::string &str, size_t maxChars) {
     return str.substr(0, static_cast<size_t>(bytes)) + "...";
 }
 
+int charDisplayWidth(uint32_t cp) {
+    if (cp == 0) {
+        return 0;
+    }
+    if ((cp >= 0x1100 && cp <= 0x115F) || cp == 0x2329 || cp == 0x232A ||
+        (cp >= 0x2E80 && cp <= 0x303E) || (cp >= 0x3040 && cp <= 0x3247) ||
+        (cp >= 0x3250 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0xA4CF) ||
+        (cp >= 0xA960 && cp <= 0xA97F) || (cp >= 0xAC00 && cp <= 0xD7A3) ||
+        (cp >= 0xF900 && cp <= 0xFAFF) || (cp >= 0xFE10 && cp <= 0xFE19) ||
+        (cp >= 0xFE30 && cp <= 0xFE6F) || (cp >= 0xFF01 && cp <= 0xFF60) ||
+        (cp >= 0xFFE0 && cp <= 0xFFE6) || (cp >= 0x1F300 && cp <= 0x1FAFF) ||
+        (cp >= 0x20000 && cp <= 0x3FFFD)) {
+        return 2;
+    }
+    return 1;
+}
+
+std::string wrapPreeditText(const std::string &text, int maxWidth) {
+    if (maxWidth <= 0 || text.empty() || !fcitx::utf8::validate(text)) {
+        return text;
+    }
+
+    std::string out;
+    out.reserve(text.size() + 8);
+    int lineWidth = 0;
+    size_t lineStartOutIdx = 0;
+    size_t lastSpaceOutIdx = 0;
+    int widthSinceSpace = 0;
+
+    auto it = text.begin();
+    const auto end = text.end();
+    while (it != end) {
+        uint32_t cp = 0;
+        auto next = fcitx::utf8::getNextChar(it, end, &cp);
+        if (!fcitx::utf8::isValidChar(cp)) {
+            out.append(it, next);
+            it = next;
+            continue;
+        }
+        if (cp == '\n') {
+            out.push_back('\n');
+            lineWidth = 0;
+            lineStartOutIdx = out.size();
+            lastSpaceOutIdx = 0;
+            widthSinceSpace = 0;
+            it = next;
+            continue;
+        }
+
+        const int w = charDisplayWidth(cp);
+        if (lineWidth > 0 && lineWidth + w > maxWidth) {
+            if (cp == ' ') {
+                out.push_back('\n');
+                lineWidth = 0;
+                lineStartOutIdx = out.size();
+                lastSpaceOutIdx = 0;
+                widthSinceSpace = 0;
+                it = next;
+                continue;
+            }
+            if (lastSpaceOutIdx > lineStartOutIdx &&
+                widthSinceSpace <= maxWidth / 3 && cp < 0x80) {
+                out[lastSpaceOutIdx - 1] = '\n';
+                lineStartOutIdx = lastSpaceOutIdx;
+                lineWidth = widthSinceSpace;
+                lastSpaceOutIdx = 0;
+                widthSinceSpace = 0;
+            } else {
+                out.push_back('\n');
+                lineWidth = 0;
+                lineStartOutIdx = out.size();
+                lastSpaceOutIdx = 0;
+                widthSinceSpace = 0;
+            }
+        }
+
+        out.append(it, next);
+        lineWidth += w;
+        if (cp == ' ') {
+            lastSpaceOutIdx = out.size();
+            widthSinceSpace = 0;
+        } else if (lastSpaceOutIdx > lineStartOutIdx) {
+            widthSinceSpace += w;
+        }
+        it = next;
+    }
+    return out;
+}
+
 } // namespace
 
 GeminiVoiceEngine::GeminiVoiceEngine(fcitx::Instance *instance)
@@ -237,7 +326,7 @@ void GeminiVoiceEngine::handleIdleKey(fcitx::InputContext *ic,
     partialText_.clear();
     rawText_.clear();
     state_ = State::RECORDING;
-    setPanelDisplay(ic, _("[Recording...]"), "");
+    setPanelDisplay(ic, *config_.recordingPrefix, "");
 }
 
 void GeminiVoiceEngine::handleRecordingKey(fcitx::InputContext *ic,
@@ -383,15 +472,26 @@ void GeminiVoiceEngine::setPanelDisplay(fcitx::InputContext *ic,
     if (!ic) {
         return;
     }
+    const std::string wrappedPreedit =
+        wrapPreeditText(preeditText, *config_.preeditMaxWidth);
+
     fcitx::Text formattedPreedit;
-    if (!preeditText.empty()) {
-        formattedPreedit.append(preeditText, fcitx::TextFormatFlag::Underline);
-        formattedPreedit.setCursor(static_cast<int>(preeditText.size()));
+    if (!wrappedPreedit.empty()) {
+        formattedPreedit.append(wrappedPreedit,
+                                fcitx::TextFormatFlag::Underline);
+        formattedPreedit.setCursor(static_cast<int>(wrappedPreedit.size()));
+    }
+
+    std::string displayAuxUp = auxUp;
+    if (!displayAuxUp.empty() && !wrappedPreedit.empty() &&
+        displayAuxUp.back() != ' ' && displayAuxUp.back() != '\t') {
+        displayAuxUp.push_back(' ');
     }
 
     auto &panel = ic->inputPanel();
     panel.setClientPreedit(fcitx::Text());
-    panel.setAuxUp(auxUp.empty() ? fcitx::Text() : fcitx::Text(auxUp));
+    panel.setAuxUp(displayAuxUp.empty() ? fcitx::Text()
+                                        : fcitx::Text(displayAuxUp));
     panel.setPreedit(formattedPreedit);
     ic->updatePreedit();
     ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
@@ -569,7 +669,7 @@ void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
         }
         auto it = msg.find("text");
         partialText_ = (it != msg.end()) ? it->second : "";
-        setPanelDisplay(ic, _("[Recording...]"), partialText_);
+        setPanelDisplay(ic, *config_.recordingPrefix, partialText_);
         return;
     }
 

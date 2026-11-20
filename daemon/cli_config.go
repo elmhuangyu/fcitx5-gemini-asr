@@ -57,6 +57,8 @@ Common keys for "config get" / "config set":
   ime.trigger_key              Trigger shortcut list, comma-separated (e.g. Alt+space)
   ime.socket_path              Unix socket path for addon <-> daemon
   ime.language                 Optional frontend language override (empty = use daemon)
+  ime.recording_prefix         Prefix shown during recording (e.g. 🎙️, [Recording...], or "none")
+  ime.preedit_max_width        Wrap preedit after N display columns (0 disables wrapping)
   live.model                   Gemini Live transcription model
   live.language                Transcription language (e.g. auto, cmn-Hans-CN, en-US, cmn-Hans-CN,en-US)
   live.mode                    Live transcription mode (VERBATIM | SMART)
@@ -121,6 +123,14 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	if fcitxLang == "" {
 		fcitxLang = "(use daemon)"
 	}
+	recPrefix := fcitxCfg.RecordingPrefix
+	if recPrefix == "" {
+		recPrefix = "(none)"
+	}
+	wrapWidth := fmt.Sprintf("%d columns", fcitxCfg.PreeditMaxWidth)
+	if fcitxCfg.PreeditMaxWidth == 0 {
+		wrapWidth = "0 (disabled)"
+	}
 
 	_, _ = fmt.Fprintf(w, "Fcitx5 addon config (%s):\n", fcitxPath)
 	_, _ = fmt.Fprintf(w, "  ime.mode:                 %s\n", mode)
@@ -128,6 +138,8 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	_, _ = fmt.Fprintf(w, "  ime.trigger_key:          %s\n", strings.Join(fcitxCfg.TriggerKeys, ", "))
 	_, _ = fmt.Fprintf(w, "  ime.socket_path:          %s\n", fcitxCfg.SocketPath)
 	_, _ = fmt.Fprintf(w, "  ime.language:             %s\n", fcitxLang)
+	_, _ = fmt.Fprintf(w, "  ime.recording_prefix:     %s\n", recPrefix)
+	_, _ = fmt.Fprintf(w, "  ime.preedit_max_width:    %s\n", wrapWidth)
 
 	_, _ = fmt.Fprintf(w, "\nDaemon config (%s):\n", configPath)
 	_, _ = fmt.Fprintf(w, "  connection.proxy:         %s\n", proxyVal)
@@ -224,6 +236,10 @@ func getConfigKey(cfg Config, fcitxCfg FcitxAddonConfig, key string) (string, er
 		return fcitxCfg.SocketPath, nil
 	case "ime.language":
 		return fcitxCfg.Language, nil
+	case "ime.recording_prefix":
+		return fcitxCfg.RecordingPrefix, nil
+	case "ime.preedit_max_width":
+		return strconv.Itoa(fcitxCfg.PreeditMaxWidth), nil
 	case "connection.proxy":
 		return cfg.Connection.Proxy, nil
 	case "connection.credential_name":
@@ -459,6 +475,23 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 			trimmed = ""
 		}
 		fcitxCfg.Language = trimmed
+		return false, true, nil
+	case "ime.recording_prefix":
+		trimmed := strings.TrimSpace(val)
+		if strings.EqualFold(trimmed, "none") || trimmed == "-" {
+			fcitxCfg.RecordingPrefix = ""
+		} else if strings.EqualFold(trimmed, "default") {
+			fcitxCfg.RecordingPrefix = DefaultRecordingPrefix
+		} else {
+			fcitxCfg.RecordingPrefix = val
+		}
+		return false, true, nil
+	case "ime.preedit_max_width":
+		w, parseErr := strconv.Atoi(strings.TrimSpace(val))
+		if parseErr != nil || w < 0 || w > 500 {
+			return false, false, fmt.Errorf("invalid ime.preedit_max_width %q (expected integer 0..500)", val)
+		}
+		fcitxCfg.PreeditMaxWidth = w
 		return false, true, nil
 	case "connection.proxy":
 		p, pErr := validateProxyURL(val)

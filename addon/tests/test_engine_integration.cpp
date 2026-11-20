@@ -353,8 +353,7 @@ int main() {
                 REQUIRE(cmd && (*cmd)["cmd"] == "start_recording");
                 runOnMain(instance, [&]() {
                     REQUIRE(ic->inputPanel().clientPreedit().empty());
-                    REQUIRE(ic->inputPanel().auxUp().toString() ==
-                            "[Recording...]");
+                    REQUIRE(ic->inputPanel().auxUp().toString() == "🎙️");
                     REQUIRE(ic->inputPanel().preedit().empty());
                 });
             }
@@ -363,8 +362,7 @@ int main() {
             // keeping clientPreedit empty.
             daemon.sendEvent(R"({"event":"partial_text","text":"今天下午"})");
             REQUIRE(waitOnMain(instance, [&]() {
-                return ic->inputPanel().auxUp().toString() ==
-                           "[Recording...]" &&
+                return ic->inputPanel().auxUp().toString() == "🎙️ " &&
                        ic->inputPanel().preedit().toString() == "今天下午" &&
                        ic->inputPanel().clientPreedit().empty();
             }));
@@ -432,7 +430,7 @@ int main() {
                 sendKey(ic.get(), fcitx::Key(FcitxKey_Right));
                 auto cl = ic->inputPanel().candidateList();
                 REQUIRE(cl && cl->size() == 3);
-                REQUIRE(ic->inputPanel().auxUp().toString() == "Refine ▸");
+                REQUIRE(ic->inputPanel().auxUp().toString() == "Refine ▸ ");
                 REQUIRE(ic->inputPanel().clientPreedit().empty());
 
                 sendKey(ic.get(), fcitx::Key(FcitxKey_Left));
@@ -582,8 +580,7 @@ int main() {
                     daemon.waitForCommand(cmdIdx++));
                 REQUIRE(cmd && (*cmd)["cmd"] == "start_recording");
                 runOnMain(instance, [&]() {
-                    REQUIRE(ic->inputPanel().auxUp().toString() ==
-                            "[Recording...]");
+                    REQUIRE(ic->inputPanel().auxUp().toString() == "🎙️");
                     REQUIRE(ic->inputPanel().clientPreedit().empty());
                 });
             }
@@ -622,10 +619,19 @@ int main() {
             runOnMain(instance, [&]() {
                 fcitx::RawConfig rawCfg;
                 rawCfg.setValueByPath("ShowActionMenu", "False");
+                rawCfg.setValueByPath("RecordingPrefix", "🔴");
+                rawCfg.setValueByPath("PreeditMaxWidth", "10");
                 addon->setConfig(rawCfg);
                 sendKey(ic.get(), fcitx::Key("Alt+space"));
             });
             daemon.waitForCommand(cmdIdx++);
+            daemon.sendEvent(
+                R"({"event":"partial_text","text":"一二三四五六"})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                return ic->inputPanel().auxUp().toString() == "🔴 " &&
+                       ic->inputPanel().preedit().toString() ==
+                           "一二三四五\n六";
+            }));
             runOnMain(instance, [&]() {
                 sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
             });

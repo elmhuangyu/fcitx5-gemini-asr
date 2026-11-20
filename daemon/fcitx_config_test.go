@@ -16,15 +16,17 @@ func TestFcitxAddonConfig_DefaultsAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load missing config: %v", err)
 	}
-	if !def.ShowActionMenu || def.SocketPath != DefaultFcitxSocketPath || !reflect.DeepEqual(def.TriggerKeys, []string{"Alt+space"}) {
+	if !def.ShowActionMenu || def.SocketPath != DefaultFcitxSocketPath || !reflect.DeepEqual(def.TriggerKeys, []string{"Alt+space"}) || def.RecordingPrefix != DefaultRecordingPrefix || def.PreeditMaxWidth != DefaultPreeditMaxWidth {
 		t.Fatalf("unexpected defaults: %+v", def)
 	}
 
 	want := FcitxAddonConfig{
-		TriggerKeys:    []string{"Alt+space", "Super+v"},
-		ShowActionMenu: false,
-		SocketPath:     "/tmp/path with spaces/gemini.sock",
-		Language:       "en-US",
+		TriggerKeys:     []string{"Alt+space", "Super+v"},
+		ShowActionMenu:  false,
+		SocketPath:      "/tmp/path with spaces/gemini.sock",
+		Language:        "en-US",
+		RecordingPrefix: "🔴",
+		PreeditMaxWidth: 40,
 	}
 	if err := SaveFcitxAddonConfig(path, want); err != nil {
 		t.Fatalf("save fcitx config: %v", err)

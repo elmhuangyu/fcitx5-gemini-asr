@@ -27,6 +27,14 @@ msgstr "后台服务 Unix Socket 路径"
 msgid "Transcription Language"
 msgstr "语音转录语言"
 
+#: addon/engine.h:43
+msgid "Recording Prefix"
+msgstr "录音状态前缀"
+
+#: addon/engine.h:46
+msgid "Preedit Line Wrap Width"
+msgstr "预编辑文本自动换行宽度"
+
 #: addon/engine.cpp:241 addon/engine.cpp:553
 msgid "Gemini Voice Daemon not connected"
 msgstr "Gemini Voice Daemon 未连接"

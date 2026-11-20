@@ -12,21 +12,29 @@ import (
 	"time"
 )
 
-const DefaultFcitxSocketPath = "$XDG_RUNTIME_DIR/gemini-ime.sock"
+const (
+	DefaultFcitxSocketPath = "$XDG_RUNTIME_DIR/gemini-ime.sock"
+	DefaultRecordingPrefix = "🎙️"
+	DefaultPreeditMaxWidth = 50
+)
 
 type FcitxAddonConfig struct {
-	TriggerKeys    []string
-	ShowActionMenu bool
-	SocketPath     string
-	Language       string
+	TriggerKeys     []string
+	ShowActionMenu  bool
+	SocketPath      string
+	Language        string
+	RecordingPrefix string
+	PreeditMaxWidth int
 }
 
 func DefaultFcitxAddonConfig() FcitxAddonConfig {
 	return FcitxAddonConfig{
-		TriggerKeys:    []string{"Alt+space"},
-		ShowActionMenu: true,
-		SocketPath:     DefaultFcitxSocketPath,
-		Language:       "",
+		TriggerKeys:     []string{"Alt+space"},
+		ShowActionMenu:  true,
+		SocketPath:      DefaultFcitxSocketPath,
+		Language:        "",
+		RecordingPrefix: DefaultRecordingPrefix,
+		PreeditMaxWidth: DefaultPreeditMaxWidth,
 	}
 }
 
@@ -112,6 +120,12 @@ func LoadFcitxAddonConfig(path string) (FcitxAddonConfig, error) {
 				cfg.SocketPath = v
 			case "Language":
 				cfg.Language = v
+			case "RecordingPrefix":
+				cfg.RecordingPrefix = v
+			case "PreeditMaxWidth":
+				if w, convErr := strconv.Atoi(v); convErr == nil && w >= 0 && w <= 500 {
+					cfg.PreeditMaxWidth = w
+				}
 			}
 		case "TriggerKey":
 			if idx, convErr := strconv.Atoi(k); convErr == nil && v != "" {
@@ -158,6 +172,12 @@ func renderFcitxAddonConfig(cfg FcitxAddonConfig) []byte {
 	b.WriteByte('\n')
 	b.WriteString("Language=")
 	b.WriteString(quoteFcitxValue(strings.TrimSpace(cfg.Language)))
+	b.WriteByte('\n')
+	b.WriteString("RecordingPrefix=")
+	b.WriteString(quoteFcitxValue(cfg.RecordingPrefix))
+	b.WriteByte('\n')
+	b.WriteString("PreeditMaxWidth=")
+	b.WriteString(strconv.Itoa(cfg.PreeditMaxWidth))
 	b.WriteByte('\n')
 	b.WriteByte('\n')
 	b.WriteString("[TriggerKey]\n")

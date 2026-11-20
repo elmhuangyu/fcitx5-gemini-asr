@@ -38,7 +38,12 @@ FCITX_CONFIGURATION(
                                           _("Daemon Unix Socket Path"),
                                           "$XDG_RUNTIME_DIR/gemini-ime.sock"};
     fcitx::Option<std::string> language{this, "Language",
-                                        _("Transcription Language"), ""};);
+                                        _("Transcription Language"), ""};
+    fcitx::Option<std::string> recordingPrefix{this, "RecordingPrefix",
+                                               _("Recording Prefix"), "🎙️"};
+    fcitx::Option<int, fcitx::IntConstrain> preeditMaxWidth{
+        this, "PreeditMaxWidth", _("Preedit Line Wrap Width"), 50,
+        fcitx::IntConstrain(0, 500)};);
 
 class GeminiVoiceEngine : public fcitx::AddonInstance {
 public:

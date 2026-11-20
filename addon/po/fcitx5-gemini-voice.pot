@@ -27,6 +27,14 @@ msgstr ""
 msgid "Transcription Language"
 msgstr ""
 
+#: addon/engine.h:43
+msgid "Recording Prefix"
+msgstr ""
+
+#: addon/engine.h:46
+msgid "Preedit Line Wrap Width"
+msgstr ""
+
 #: addon/engine.cpp:241 addon/engine.cpp:553
 msgid "Gemini Voice Daemon not connected"
 msgstr ""
