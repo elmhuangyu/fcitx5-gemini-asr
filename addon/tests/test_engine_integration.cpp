@@ -916,7 +916,19 @@ int main() {
                     sendKey(ic.get(), fcitx::Key(FcitxKey_3));
                     sendKey(ic.get(), fcitx::Key(FcitxKey_Page_Down));
                     auto cl = ic->inputPanel().candidateList();
-                    REQUIRE(cl && cl->toPageable()->currentPage() == 1);
+                    REQUIRE(cl != nullptr);
+                    REQUIRE(cl->toPageable()->currentPage() == 1);
+                    REQUIRE(cl->cursorIndex() == 0);
+
+                    // Page_Up returns to page 0 and skips the header at index 0.
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Page_Up));
+                    REQUIRE(cl->toPageable()->currentPage() == 0);
+                    REQUIRE(cl->cursorIndex() == 1);
+
+                    // Page_Down back to page 1 and select with digit '2'.
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Page_Down));
+                    REQUIRE(cl->toPageable()->currentPage() == 1);
+                    REQUIRE(cl->cursorIndex() == 0);
                     sendKey(ic.get(), fcitx::Key(FcitxKey_2));
                 });
                 {

@@ -808,6 +808,8 @@ void GeminiVoiceEngine::showActionMenu(fcitx::InputContext *ic) {
     list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
     list->setPageSize(9);
     list->setSelectionKey(defaultSelectionKeys());
+    list->setCursorPositionAfterPaging(
+        fcitx::CursorPositionAfterPaging::ResetToFirst);
 
     const std::string preview = truncateUtf8(rawText_, 40);
     list->append<ActionCandidateWord>(
@@ -880,6 +882,8 @@ void GeminiVoiceEngine::showRefineSubmenu(fcitx::InputContext *ic) {
     list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
     list->setPageSize(9);
     list->setSelectionKey(defaultSelectionKeys());
+    list->setCursorPositionAfterPaging(
+        fcitx::CursorPositionAfterPaging::ResetToFirst);
 
     list->append<ActionCandidateWord>(
         fcitx::Text(_(
@@ -930,6 +934,8 @@ void GeminiVoiceEngine::showTranslateSubmenu(fcitx::InputContext *ic) {
     list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
     list->setPageSize(9);
     list->setSelectionKey(defaultSelectionKeys());
+    list->setCursorPositionAfterPaging(
+        fcitx::CursorPositionAfterPaging::ResetToFirst);
 
     for (const auto &target : effectiveTranslateTargets()) {
         list->append<ActionCandidateWord>(
