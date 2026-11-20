@@ -75,11 +75,13 @@ if [[ -w "${CMAKE_PREFIX}" ]]; then
 else
     sudo cmake --install "${ROOT_DIR}/addon/build"
 fi
-rm -f "$HOME/.local/lib/fcitx5/libgemini-voice.so" \
-      "$HOME/.local/lib64/fcitx5/libgemini-voice.so" \
-      "$HOME/.local/share/fcitx5/addon/gemini-voice.conf" \
-      "$HOME/.local/share/fcitx5/inputmethod/gemini-voice.conf" \
-      "$HOME/.local/share/locale/zh_CN/LC_MESSAGES/fcitx5-gemini-voice.mo"
+if [[ "${CMAKE_PREFIX}" != "$HOME/.local" ]]; then
+    rm -f "$HOME/.local/lib/fcitx5/libgemini-voice.so" \
+          "$HOME/.local/lib64/fcitx5/libgemini-voice.so" \
+          "$HOME/.local/share/fcitx5/addon/gemini-voice.conf" \
+          "$HOME/.local/share/fcitx5/inputmethod/gemini-voice.conf" \
+          "$HOME/.local/share/locale/zh_CN/LC_MESSAGES/fcitx5-gemini-voice.mo"
+fi
 
 OLD_SYS_IM_CONF="${CMAKE_PREFIX}/share/fcitx5/inputmethod/gemini-voice.conf"
 if [[ -e "${OLD_SYS_IM_CONF}" || -L "${OLD_SYS_IM_CONF}" ]]; then
