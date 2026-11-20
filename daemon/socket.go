@@ -39,6 +39,7 @@ type AudioFactory func(ctx context.Context) (AudioSource, error)
 
 type PostProcessRunner interface {
 	Generate(ctx context.Context, cfg Config, apiKey, action, rawText string) (string, error)
+	GenerateWithLabel(ctx context.Context, cfg Config, apiKey, action, targetLabel, rawText string) (string, error)
 }
 
 type SocketServerDeps struct {
@@ -512,9 +513,7 @@ func (cs *clientSession) makePostProcessFn(cfg Config, apiKey string, targetLabe
 	}
 	return func(ctx context.Context, action, rawText string) (string, error) {
 		if targetLabel != "" {
-			if pp, ok := cs.server.deps.PostProcessor.(*PostProcessor); ok {
-				return pp.GenerateWithLabel(ctx, cfg, apiKey, action, targetLabel, rawText)
-			}
+			return cs.server.deps.PostProcessor.GenerateWithLabel(ctx, cfg, apiKey, action, targetLabel, rawText)
 		}
 		return cs.server.deps.PostProcessor.Generate(ctx, cfg, apiKey, action, rawText)
 	}

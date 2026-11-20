@@ -44,9 +44,10 @@ func (f *fakeTranscriber) Run(ctx context.Context, audio AudioSource, stopCh <-c
 }
 
 type fakePostProcessor struct {
-	mu    sync.Mutex
-	calls map[string]int
-	delay time.Duration
+	mu        sync.Mutex
+	calls     map[string]int
+	lastLabel string
+	delay     time.Duration
 }
 
 func newFakePostProcessor() *fakePostProcessor {
@@ -65,6 +66,13 @@ func (f *fakePostProcessor) Generate(ctx context.Context, cfg Config, apiKey, ac
 	f.calls[action]++
 	f.mu.Unlock()
 	return fmt.Sprintf("[%s] %s", action, rawText), nil
+}
+
+func (f *fakePostProcessor) GenerateWithLabel(ctx context.Context, cfg Config, apiKey, action, targetLabel, rawText string) (string, error) {
+	f.mu.Lock()
+	f.lastLabel = targetLabel
+	f.mu.Unlock()
+	return f.Generate(ctx, cfg, apiKey, action, rawText)
 }
 
 func startTestSocketServer(t *testing.T, tr LiveTranscriber, pp PostProcessRunner) (string, context.CancelFunc, <-chan error) {
