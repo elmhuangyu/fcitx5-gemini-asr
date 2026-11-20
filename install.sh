@@ -2,15 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODE="user"
+BUILD_ONLY=false
 
 usage() {
     cat <<'EOF'
-Usage: ./install.sh [--user | --build-only]
+Usage: ./install.sh [--build-only]
 
-Modes:
-  --user        Install Fcitx5 addon into ~/.local (default, no sudo), install Go
-                daemon/CLI to ~/.local/bin, and set up systemd user files.
+Default behavior installs the Fcitx5 addon into ~/.local (no sudo), installs
+the Go daemon/CLI to ~/.local/bin, and sets up systemd user files.
+
+Options:
   --build-only  Compile C++ addon & Go daemon/CLI and run all test suites without
                 modifying ~/.local or ~/.config.
 EOF
@@ -18,12 +19,8 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --user)
-            MODE="user"
-            shift
-            ;;
         --build-only)
-            MODE="build-only"
+            BUILD_ONLY=true
             shift
             ;;
         -h|--help)
@@ -66,12 +63,12 @@ cmake -S "${ROOT_DIR}/addon" -B "${ROOT_DIR}/addon/build" \
 cmake --build "${ROOT_DIR}/addon/build" -j"$(nproc)"
 ctest --test-dir "${ROOT_DIR}/addon/build" --output-on-failure
 
-if [[ "${MODE}" == "build-only" ]]; then
+if [[ "${BUILD_ONLY}" == "true" ]]; then
     echo "==> Build & tests succeeded (--build-only: skipped installation)."
     exit 0
 fi
 
-echo "==> [3/4] Installing Fcitx5 addon (${MODE})..."
+echo "==> [3/4] Installing Fcitx5 addon..."
 cmake --install "${ROOT_DIR}/addon/build"
 
 echo "==> [4/4] Installing Go daemon/CLI, config, and systemd user service..."

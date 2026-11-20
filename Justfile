@@ -70,10 +70,6 @@ check: fmt-check lint build test
 install:
     ./install.sh
 
-# Install user-local Fcitx5 addon (~/.local) and user daemon/service
-install-user:
-    ./install.sh --user
-
 # Remove build artifacts
 clean:
     rm -rf addon/build daemon/gemini-voice-daemon daemon/gemini-voice
