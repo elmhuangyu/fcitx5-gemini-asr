@@ -94,11 +94,13 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 		t.Fatalf("cred file mode = %04o, want 0600", info.Mode().Perm())
 	}
 
-	// Verify command hits Gemini generateContent API with "what model you are"
+	// Verify command hits Gemini generateContent API with "Reply with your model name only."
 	var gotPrompt string
 	var gotAPIKey string
+	var apiHits int
 	apiStatus := http.StatusOK
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		apiHits++
 		gotAPIKey = r.Header.Get("x-goog-api-key")
 		body, _ := io.ReadAll(r.Body)
 		var req generateContentRequest
@@ -130,8 +132,8 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 	if gotAPIKey != rawSecret {
 		t.Fatalf("expected x-goog-api-key=%q, got %q", rawSecret, gotAPIKey)
 	}
-	if gotPrompt != "what model you are" {
-		t.Fatalf("expected prompt %q, got %q", "what model you are", gotPrompt)
+	if gotPrompt != "Reply with your model name only." {
+		t.Fatalf("expected prompt %q, got %q", "Reply with your model name only.", gotPrompt)
 	}
 	if strings.Contains(stdout.String(), rawSecret) ||
 		!strings.Contains(stdout.String(), "AIza...2345") ||
@@ -140,7 +142,22 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 		t.Fatalf("unexpected verify output: %s", stdout.String())
 	}
 
-	// Verify fails when API returns an error
+	// Verify --offline skips API check and prints OK only
+	apiHits = 0
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLI("gemini-voice", []string{"auth", "verify", "--offline", "--config", cfgPath}, deps)
+	if code != 0 {
+		t.Fatalf("auth verify --offline exit=%d stderr=%s", code, stderr.String())
+	}
+	if apiHits != 0 {
+		t.Fatalf("expected 0 API hits with --offline, got %d", apiHits)
+	}
+	if !strings.Contains(stdout.String(), "OK:") || strings.Contains(stdout.String(), "API OK") {
+		t.Fatalf("unexpected --offline stdout: %s", stdout.String())
+	}
+
+	// Verify fails when API returns an error and does not print OK before failing
 	apiStatus = http.StatusUnauthorized
 	stdout.Reset()
 	stderr.Reset()
@@ -148,8 +165,26 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("expected verify failure on 401, got exit=%d", code)
 	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout on failed verify, got: %s", stdout.String())
+	}
 	if !strings.Contains(stderr.String(), "API verification failed") || strings.Contains(stderr.String(), rawSecret) {
 		t.Fatalf("unexpected verify failure stderr: %s", stderr.String())
+	}
+
+	// Verify prints migration hint when systemd-creds decryption fails
+	failDeps := deps
+	failDeps.runCmd = func(ctx context.Context, stdin string, name string, args ...string) cmdResult {
+		return cmdResult{stderr: "Failed to decrypt", err: errors.New("exit status 1")}
+	}
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLI("gemini-voice", []string{"auth", "verify", "--config", cfgPath}, failDeps)
+	if code != 1 {
+		t.Fatalf("expected verify failure on decrypt error, got exit=%d", code)
+	}
+	if !strings.Contains(stderr.String(), "gemini-voice auth set") {
+		t.Fatalf("expected auth set hint in stderr: %s", stderr.String())
 	}
 
 	// Key-file input

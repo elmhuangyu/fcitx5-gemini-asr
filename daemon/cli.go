@@ -81,7 +81,7 @@ func defaultVerifyAPIKey(ctx context.Context, cfg Config, apiKey string) (string
 	if model == "" {
 		model = DefaultPostProcessModel
 	}
-	reply, err := NewPostProcessor().GenerateRaw(ctx, cfg, apiKey, model, "what model you are", 0.0)
+	reply, err := NewPostProcessor().GenerateRaw(ctx, cfg, apiKey, model, "Reply with your model name only.", 0.0)
 	if err != nil {
 		return model, "", err
 	}
@@ -499,6 +499,7 @@ func cmdAuthVerify(args []string, deps cliDeps) int {
 	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
 	credPathFlag := fs.String("path", "", "Path to encrypted .cred file")
 	credNameFlag := fs.String("name", "", "Credential name override")
+	offline := fs.Bool("offline", false, "Verify local credential decryption only without calling Gemini API")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -541,6 +542,7 @@ func cmdAuthVerify(args []string, deps cliDeps) int {
 			detail = ": " + detail
 		}
 		_, _ = fmt.Fprintf(deps.stderr, "error: failed to decrypt %q (%v)%s\n", credPath, res.err, detail)
+		_, _ = fmt.Fprintln(deps.stderr, "hint: if this credential was encrypted with an older key scope (e.g. system --with-key=tpm2), re-run 'gemini-voice auth set' to re-encrypt it.")
 		return 1
 	}
 
@@ -550,30 +552,37 @@ func cmdAuthVerify(args []string, deps cliDeps) int {
 		return 1
 	}
 
+	var model, preview string
+	if !*offline {
+		cfg, cfgErr := loadConfigOrDefault(*configPath)
+		if cfgErr != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "error: load config %q: %v\n", *configPath, cfgErr)
+			return 1
+		}
+		verifyFn := deps.verifyAPIKey
+		if verifyFn == nil {
+			verifyFn = defaultVerifyAPIKey
+		}
+		apiCtx, apiCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer apiCancel()
+		var reply string
+		var apiErr error
+		model, reply, apiErr = verifyFn(apiCtx, cfg, plain)
+		if apiErr != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "error: API verification failed: %v\n", apiErr)
+			return 1
+		}
+		preview = strings.Join(strings.Fields(reply), " ")
+		if len(preview) > 200 {
+			preview = preview[:197] + "..."
+		}
+	}
+
 	_, _ = fmt.Fprintf(deps.stdout, "OK: %s (name=%s, mode=%04o, key=%s, length=%d)\n",
 		credPath, credName, info.Mode().Perm(), MaskSecret(plain), len(plain))
-
-	cfg, cfgErr := loadConfigOrDefault(*configPath)
-	if cfgErr != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "error: load config %q: %v\n", *configPath, cfgErr)
-		return 1
+	if !*offline {
+		_, _ = fmt.Fprintf(deps.stdout, "API OK (model=%s): %s\n", model, preview)
 	}
-	verifyFn := deps.verifyAPIKey
-	if verifyFn == nil {
-		verifyFn = defaultVerifyAPIKey
-	}
-	apiCtx, apiCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	defer apiCancel()
-	model, reply, apiErr := verifyFn(apiCtx, cfg, plain)
-	if apiErr != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "error: API verification failed: %v\n", apiErr)
-		return 1
-	}
-	preview := strings.Join(strings.Fields(reply), " ")
-	if len(preview) > 200 {
-		preview = preview[:197] + "..."
-	}
-	_, _ = fmt.Fprintf(deps.stdout, "API OK (model=%s): %s\n", model, preview)
 	return 0
 }
 
