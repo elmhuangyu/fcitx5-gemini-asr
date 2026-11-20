@@ -596,26 +596,34 @@ func shouldPrintKeyScopeHint(stderr string) bool {
 	if s == "" {
 		return false
 	}
-	for _, nonKey := range []string{
+	// Check strong decryption/TPM indicators before filesystem error substrings
+	// because TPM migration errors often wrap "No such file or directory".
+	if containsAny(s, []string{
+		"failed to decrypt",
+		"tpm",
+		"unseal",
+	}) {
+		return true
+	}
+	if containsAny(s, []string{
 		"no such file",
 		"does not exist",
 		"permission denied",
 		"operation not permitted",
 		"is a directory",
-	} {
-		if strings.Contains(s, nonKey) {
-			return false
-		}
+	}) {
+		return false
 	}
-	for _, indicator := range []string{
-		"failed to decrypt",
+	return containsAny(s, []string{
 		"bad message",
-		"tpm",
 		"key",
 		"scope",
-		"unseal",
-	} {
-		if strings.Contains(s, indicator) {
+	})
+}
+
+func containsAny(s string, substrs []string) bool {
+	for _, sub := range substrs {
+		if strings.Contains(s, sub) {
 			return true
 		}
 	}

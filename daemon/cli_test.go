@@ -181,9 +181,12 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 		{name: "failed to decrypt", stderr: "Failed to decrypt", wantHint: true},
 		{name: "bad message", stderr: "Failed to decrypt: Bad message", wantHint: true},
 		{name: "tpm unseal", stderr: "TPM2 unseal failed", wantHint: true},
+		{name: "tpm missing device", stderr: "Failed to decrypt: Failed to open TPM2 device: No such file or directory", wantHint: true},
+		{name: "unseal missing file", stderr: "Failed to unseal secret: No such file or directory", wantHint: true},
 		{name: "missing file", stderr: "No such file or directory", wantHint: false},
+		{name: "missing key file", stderr: "open /path/to/gemini-api-key.cred: No such file or directory", wantHint: false},
 		{name: "permission denied", stderr: "Failed to open credential: Permission denied", wantHint: false},
-		{name: "decrypt permission denied", stderr: "Failed to decrypt: Permission denied", wantHint: false},
+		{name: "decrypt permission denied", stderr: "Failed to decrypt: Permission denied", wantHint: true},
 		{name: "empty stderr", stderr: "", wantHint: false},
 	} {
 		failDeps := deps
