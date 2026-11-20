@@ -155,12 +155,11 @@ private:
     void run() {
         std::string buf;
         while (!stopped_.load()) {
-            pollfd pfds[2]{};
+            pollfd pfds[3]{};
             nfds_t nfds = 0;
             pfds[nfds++] = {wakeFds_[0], POLLIN, 0};
-            if (clientFd_ < 0) {
-                pfds[nfds++] = {listenFd_, POLLIN, 0};
-            } else {
+            pfds[nfds++] = {listenFd_, POLLIN, 0};
+            if (clientFd_ >= 0) {
                 pfds[nfds++] = {clientFd_, POLLIN, 0};
             }
 
@@ -177,15 +176,19 @@ private:
                 break;
             }
 
-            if (clientFd_ < 0 && (pfds[1].revents & POLLIN)) {
+            if (pfds[1].revents & POLLIN) {
                 int cfd = ::accept4(listenFd_, nullptr, nullptr, SOCK_CLOEXEC);
                 if (cfd >= 0) {
                     std::lock_guard<std::mutex> lock(mu_);
+                    if (clientFd_ >= 0) {
+                        ::close(clientFd_);
+                    }
                     clientFd_ = cfd;
+                    buf.clear();
                     cv_.notify_all();
                 }
-            } else if (clientFd_ >= 0 &&
-                       (pfds[1].revents & (POLLIN | POLLHUP | POLLERR))) {
+            } else if (nfds == 3 &&
+                       (pfds[2].revents & (POLLIN | POLLHUP | POLLERR))) {
                 char tmp[1024];
                 ssize_t n = ::recv(clientFd_, tmp, sizeof(tmp), MSG_DONTWAIT);
                 if (n > 0) {
@@ -611,6 +614,7 @@ int main() {
             daemon.sendEvent(R"({"event":"state_changed","state":"idle"})");
             REQUIRE(waitOnMain(instance, [&]() {
                 return ic->inputPanel().clientPreedit().empty() &&
+                       ic->inputPanel().auxUp().empty() &&
                        ic->inputPanel().preedit().empty() &&
                        !ic->inputPanel().candidateList();
             }));
