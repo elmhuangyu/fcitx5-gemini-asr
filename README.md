@@ -47,7 +47,7 @@ Both `gemini-voice init` and `gemini-voice configure` launch an interactive mult
 - **Form steps**:
   1. **Input & Recognition**: action menu vs. direct commit, transcription language (`auto` or comma-separated BCP-47 tags), `VERBATIM`/`SMART` mode, and VAD silence timeout
   2. **Models**: live transcription model, default post-processing model, and whether to configure per-action overrides
-  3. **Per-Action Model Overrides** *(shown when enabled)*: model overrides for `refine_fix_typos`, `refine_casual`, `refine_formal`, `as_prompt`, `translate_en`, and `ask_ai`
+  3. **Per-Action Model Overrides** *(shown when enabled)*: model overrides for `refine_fix_typos`, `refine_casual`, `refine_formal`, `as_prompt`, dynamic `translate_<lang>` targets (e.g., `translate_en`), and `ask_ai`
   4. **Action Menu Prefetch** *(shown in `menu` mode)*: multi-select actions to prefetch when recording stops
   5. **Vocabulary, Hotkey & Network**: custom vocabulary (`custom_vocabulary`), Fcitx5 trigger key(s), and HTTP/SOCKS5 proxy
   6. **Gemini API Key** *(`init` only)*: masked password input (`systemd-creds` encryption); if a `.cred` file already exists, prompts whether to keep or overwrite it
@@ -97,6 +97,7 @@ gemini-voice models --remote
 
 # Choose models for live ASR, default post-processing, and individual actions:
 gemini-voice models --live gemini-3.5-transcribe-live --default gemini-3.5-flash-lite --refine-formal gemini-2.5-pro --as-prompt gemini-2.5-pro
+gemini-voice models --translate ja=gemini-2.5-flash --translate en=default  # Override or clear dynamic translate_<lang> targets (repeatable)
 gemini-voice config set model.refine_fix_typos gemini-2.5-flash-lite
 gemini-voice config set model.refine_formal default   # Clear override and inherit post_process.model
 
