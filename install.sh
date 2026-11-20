@@ -76,8 +76,19 @@ else
     sudo cmake --install "${ROOT_DIR}/addon/build"
 fi
 rm -f "$HOME/.local/lib/fcitx5/libgemini-voice.so" \
+      "$HOME/.local/lib64/fcitx5/libgemini-voice.so" \
       "$HOME/.local/share/fcitx5/addon/gemini-voice.conf" \
+      "$HOME/.local/share/fcitx5/inputmethod/gemini-voice.conf" \
       "$HOME/.local/share/locale/zh_CN/LC_MESSAGES/fcitx5-gemini-voice.mo"
+
+OLD_SYS_IM_CONF="${CMAKE_PREFIX}/share/fcitx5/inputmethod/gemini-voice.conf"
+if [[ -e "${OLD_SYS_IM_CONF}" || -L "${OLD_SYS_IM_CONF}" ]]; then
+    if [[ -w "${OLD_SYS_IM_CONF}" || -w "$(dirname "${OLD_SYS_IM_CONF}")" ]]; then
+        rm -f "${OLD_SYS_IM_CONF}"
+    else
+        sudo rm -f "${OLD_SYS_IM_CONF}"
+    fi
+fi
 
 echo "==> [4/4] Installing Go daemon/CLI, config, and systemd user service..."
 mkdir -p "$HOME/.local/bin" "$HOME/.config/gemini-voice" "$HOME/.config/systemd/user"
