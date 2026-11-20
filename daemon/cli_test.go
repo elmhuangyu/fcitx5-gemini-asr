@@ -172,19 +172,34 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 		t.Fatalf("unexpected verify failure stderr: %s", stderr.String())
 	}
 
-	// Verify prints migration hint when systemd-creds decryption fails
-	failDeps := deps
-	failDeps.runCmd = func(ctx context.Context, stdin string, name string, args ...string) cmdResult {
-		return cmdResult{stderr: "Failed to decrypt", err: errors.New("exit status 1")}
-	}
-	stdout.Reset()
-	stderr.Reset()
-	code = runCLI("gemini-voice", []string{"auth", "verify", "--config", cfgPath}, failDeps)
-	if code != 1 {
-		t.Fatalf("expected verify failure on decrypt error, got exit=%d", code)
-	}
-	if !strings.Contains(stderr.String(), "gemini-voice auth set") {
-		t.Fatalf("expected auth set hint in stderr: %s", stderr.String())
+	// Verify prints migration hint only when systemd-creds failure suggests a key/scope/decryption mismatch
+	for _, tc := range []struct {
+		name     string
+		stderr   string
+		wantHint bool
+	}{
+		{name: "failed to decrypt", stderr: "Failed to decrypt", wantHint: true},
+		{name: "bad message", stderr: "Failed to decrypt: Bad message", wantHint: true},
+		{name: "tpm unseal", stderr: "TPM2 unseal failed", wantHint: true},
+		{name: "missing file", stderr: "No such file or directory", wantHint: false},
+		{name: "permission denied", stderr: "Failed to open credential: Permission denied", wantHint: false},
+		{name: "decrypt permission denied", stderr: "Failed to decrypt: Permission denied", wantHint: false},
+		{name: "empty stderr", stderr: "", wantHint: false},
+	} {
+		failDeps := deps
+		failDeps.runCmd = func(ctx context.Context, stdin string, name string, args ...string) cmdResult {
+			return cmdResult{stderr: tc.stderr, err: errors.New("exit status 1")}
+		}
+		stdout.Reset()
+		stderr.Reset()
+		code = runCLI("gemini-voice", []string{"auth", "verify", "--config", cfgPath}, failDeps)
+		if code != 1 {
+			t.Fatalf("%s: expected verify failure on decrypt error, got exit=%d", tc.name, code)
+		}
+		hasHint := strings.Contains(stderr.String(), "gemini-voice auth set")
+		if hasHint != tc.wantHint {
+			t.Fatalf("%s: hint presence=%v, want %v; stderr=%s", tc.name, hasHint, tc.wantHint, stderr.String())
+		}
 	}
 
 	// Key-file input

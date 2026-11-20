@@ -542,7 +542,9 @@ func cmdAuthVerify(args []string, deps cliDeps) int {
 			detail = ": " + detail
 		}
 		_, _ = fmt.Fprintf(deps.stderr, "error: failed to decrypt %q (%v)%s\n", credPath, res.err, detail)
-		_, _ = fmt.Fprintln(deps.stderr, "hint: if this credential was encrypted with an older key scope (e.g. system --with-key=tpm2), re-run 'gemini-voice auth set' to re-encrypt it.")
+		if shouldPrintKeyScopeHint(res.stderr) {
+			_, _ = fmt.Fprintln(deps.stderr, "hint: if this credential was encrypted with an older key scope (e.g. system --with-key=tpm2), re-run 'gemini-voice auth set' to re-encrypt it.")
+		}
 		return 1
 	}
 
@@ -584,6 +586,40 @@ func cmdAuthVerify(args []string, deps cliDeps) int {
 		_, _ = fmt.Fprintf(deps.stdout, "API OK (model=%s): %s\n", model, preview)
 	}
 	return 0
+}
+
+// shouldPrintKeyScopeHint reports whether systemd-creds decrypt stderr
+// suggests a key, scope, TPM, or credential decryption mismatch rather than
+// an unrelated filesystem or invocation error.
+func shouldPrintKeyScopeHint(stderr string) bool {
+	s := strings.ToLower(strings.TrimSpace(stderr))
+	if s == "" {
+		return false
+	}
+	for _, nonKey := range []string{
+		"no such file",
+		"does not exist",
+		"permission denied",
+		"operation not permitted",
+		"is a directory",
+	} {
+		if strings.Contains(s, nonKey) {
+			return false
+		}
+	}
+	for _, indicator := range []string{
+		"failed to decrypt",
+		"bad message",
+		"tpm",
+		"key",
+		"scope",
+		"unseal",
+	} {
+		if strings.Contains(s, indicator) {
+			return true
+		}
+	}
+	return false
 }
 
 func cmdAuthRemove(args []string, deps cliDeps) int {
