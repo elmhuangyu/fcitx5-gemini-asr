@@ -30,8 +30,6 @@
 #include <fcitx/candidatelist.h>
 #include <fcitx/event.h>
 #include <fcitx/inputcontext.h>
-#include <fcitx/inputmethodengine.h>
-#include <fcitx/inputmethodentry.h>
 #include <fcitx/inputmethodmanager.h>
 #include <fcitx/inputpanel.h>
 #include <fcitx/instance.h>
@@ -263,12 +261,11 @@ bool waitOnMain(fcitx::Instance &instance, const std::function<bool()> &pred,
     return false;
 }
 
-void sendKey(fcitx::InputMethodEngine *engine,
-             const fcitx::InputMethodEntry *entry, fcitx::InputContext *ic,
-             const fcitx::Key &key) {
+void sendKey(fcitx::InputContext *ic, const fcitx::Key &key,
+             bool expectFiltered = true) {
     fcitx::KeyEvent ev(ic, key, false);
-    engine->keyEvent(*entry, ev);
-    REQUIRE(ev.filtered());
+    ic->keyEvent(ev);
+    REQUIRE(ev.filtered() == expectFiltered);
 }
 
 } // namespace
@@ -289,7 +286,6 @@ int main() {
     fs::path runtimeDir = root / "runtime";
     fs::create_directories(addonDir);
     fs::create_directories(dataDir / "fcitx5" / "addon");
-    fs::create_directories(dataDir / "fcitx5" / "inputmethod");
     fs::create_directories(configDir);
     fs::create_directories(dataHomeDir);
     fs::create_directories(runtimeDir);
@@ -299,12 +295,10 @@ int main() {
     fs::copy_file(BUILD_ADDON_CONF,
                   dataDir / "fcitx5" / "addon" / "gemini-voice.conf",
                   fs::copy_options::overwrite_existing);
-    fs::copy_file(BUILD_IM_CONF,
-                  dataDir / "fcitx5" / "inputmethod" / "gemini-voice.conf",
-                  fs::copy_options::overwrite_existing);
 
+    std::string dataDirs = dataDir.string() + ":/usr/share";
     ::setenv("FCITX_ADDON_DIRS", addonDir.c_str(), 1);
-    ::setenv("XDG_DATA_DIRS", dataDir.c_str(), 1);
+    ::setenv("XDG_DATA_DIRS", dataDirs.c_str(), 1);
     ::setenv("XDG_CONFIG_HOME", configDir.c_str(), 1);
     ::setenv("XDG_DATA_HOME", dataHomeDir.c_str(), 1);
     ::setenv("XDG_RUNTIME_DIR", runtimeDir.c_str(), 1);
@@ -314,7 +308,7 @@ int main() {
 
     char arg0[] = "test_engine_integration";
     char arg1[] = "--disable=all";
-    char arg2[] = "--enable=gemini-voice";
+    char arg2[] = "--enable=keyboard,gemini-voice";
     char *argv[] = {arg0, arg1, arg2};
 
     std::shared_ptr<fcitx::CandidateList> staleList;
@@ -326,17 +320,14 @@ int main() {
 
         std::thread driver([&]() {
             fcitx::AddonInstance *addon = nullptr;
-            fcitx::InputMethodEngineV2 *engine = nullptr;
-            const fcitx::InputMethodEntry *entry = nullptr;
             std::unique_ptr<TestInputContext> ic;
 
             runOnMain(instance, [&]() {
                 addon = instance.addonManager().addon("gemini-voice", true);
                 REQUIRE(addon != nullptr);
-                engine = dynamic_cast<fcitx::InputMethodEngineV2 *>(addon);
-                REQUIRE(engine != nullptr);
-                entry = instance.inputMethodManager().entry("gemini-voice");
-                REQUIRE(entry != nullptr);
+                // Loaded as Module, not InputMethod.
+                REQUIRE(instance.inputMethodManager().entry("gemini-voice") ==
+                        nullptr);
 
                 ic = std::make_unique<TestInputContext>(
                     instance.inputContextManager());
@@ -346,32 +337,42 @@ int main() {
 
             int cmdIdx = 0;
 
-            // 1. TriggerKey (Alt+space) -> start_recording + clientPreedit
+            // 0. Normal key while IDLE passes through (not filtered).
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_a), false);
             });
+
+            // 1. TriggerKey (Alt+space) -> start_recording + floating
+            // InputPanel (clientPreedit stays empty even with
+            // CapabilityFlag::Preedit).
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
                     daemon.waitForCommand(cmdIdx++));
                 REQUIRE(cmd && (*cmd)["cmd"] == "start_recording");
                 runOnMain(instance, [&]() {
-                    REQUIRE(ic->inputPanel().clientPreedit().toString() ==
+                    REQUIRE(ic->inputPanel().clientPreedit().empty());
+                    REQUIRE(ic->inputPanel().auxUp().toString() ==
                             "[Recording...]");
+                    REQUIRE(ic->inputPanel().preedit().empty());
                 });
             }
 
-            // 2. partial_text updates clientPreedit when
-            // CapabilityFlag::Preedit is set
+            // 2. partial_text updates floating InputPanel preedit while
+            // keeping clientPreedit empty.
             daemon.sendEvent(R"({"event":"partial_text","text":"今天下午"})");
             REQUIRE(waitOnMain(instance, [&]() {
-                return ic->inputPanel().clientPreedit().toString() ==
-                       "今天下午";
+                return ic->inputPanel().auxUp().toString() ==
+                           "[Recording...]" &&
+                       ic->inputPanel().preedit().toString() == "今天下午" &&
+                       ic->inputPanel().clientPreedit().empty();
             }));
 
             // 3. Return -> stop_recording -> transcribe_done -> ACTION_MENU ->
             // Space commits raw_text
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Return));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
             });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
@@ -383,21 +384,26 @@ int main() {
             REQUIRE(waitOnMain(instance, [&]() {
                 auto cl = ic->inputPanel().candidateList();
                 return cl && cl->size() == 4 &&
-                       cl->layoutHint() == fcitx::CandidateLayoutHint::Vertical;
+                       cl->layoutHint() ==
+                           fcitx::CandidateLayoutHint::Vertical &&
+                       ic->inputPanel().preedit().toString() ==
+                           "今天下午三点我们开个会" &&
+                       ic->inputPanel().clientPreedit().empty();
             }));
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_space));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_space));
                 REQUIRE(ic->committed.size() == 1);
                 REQUIRE(ic->committed[0] == "今天下午三点我们开个会");
                 REQUIRE(!ic->inputPanel().candidateList());
                 REQUIRE(ic->inputPanel().clientPreedit().empty());
+                REQUIRE(ic->inputPanel().preedit().empty());
             });
 
-            // 4. Fallback preedit (when CapabilityFlag::Preedit is unset) +
+            // 4. Floating InputPanel (with CapabilityFlag::Preedit unset) +
             // Level 2 Refine navigation
             runOnMain(instance, [&]() {
                 ic->setCapabilityFlags(fcitx::CapabilityFlags{});
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+                sendKey(ic.get(), fcitx::Key("Alt+space"));
             });
             daemon.waitForCommand(cmdIdx++);
 
@@ -410,7 +416,7 @@ int main() {
             }));
 
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Return));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
             });
             daemon.waitForCommand(cmdIdx++);
             daemon.sendEvent(
@@ -423,17 +429,18 @@ int main() {
             // Right -> Level 2 Refine submenu (3 options), Left -> back to
             // Level 1, Right -> '3' -> refine_formal
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Right));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Right));
                 auto cl = ic->inputPanel().candidateList();
                 REQUIRE(cl && cl->size() == 3);
                 REQUIRE(ic->inputPanel().auxUp().toString() == "Refine ▸");
+                REQUIRE(ic->inputPanel().clientPreedit().empty());
 
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Left));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Left));
                 cl = ic->inputPanel().candidateList();
                 REQUIRE(cl && cl->size() == 4);
 
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Right));
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_3));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Right));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_3));
             });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
@@ -441,8 +448,9 @@ int main() {
                 REQUIRE(cmd && (*cmd)["cmd"] == "post_process" &&
                         (*cmd)["action"] == "refine_formal");
                 runOnMain(instance, [&]() {
-                    REQUIRE(ic->inputPanel().preedit().toString() ==
+                    REQUIRE(ic->inputPanel().auxUp().toString() ==
                             "[AI Processing...]");
+                    REQUIRE(ic->inputPanel().clientPreedit().empty());
                 });
             }
 
@@ -454,9 +462,8 @@ int main() {
                 auto cl = ic->inputPanel().candidateList();
                 return cl && cl->size() == 4;
             }));
-            runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_3));
-            });
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key(FcitxKey_3)); });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
                     daemon.waitForCommand(cmdIdx++));
@@ -473,12 +480,11 @@ int main() {
             });
 
             // 5b. Digit '4' sends post_process("as_prompt")
-            runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
-            });
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
             daemon.waitForCommand(cmdIdx++);
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Return));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
             });
             daemon.waitForCommand(cmdIdx++);
             daemon.sendEvent(
@@ -487,9 +493,8 @@ int main() {
                 auto cl = ic->inputPanel().candidateList();
                 return cl && cl->size() == 4;
             }));
-            runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_4));
-            });
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key(FcitxKey_4)); });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
                     daemon.waitForCommand(cmdIdx++));
@@ -505,12 +510,11 @@ int main() {
             });
 
             // 6. Escape during RECORDING sends cancel and clears UI
-            runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
-            });
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
             daemon.waitForCommand(cmdIdx++);
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Escape));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Escape));
             });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
@@ -520,12 +524,27 @@ int main() {
                           [&]() { REQUIRE(ic->inputPanel().empty()); });
             }
 
+            // 6a. FocusOut during RECORDING cancels active session
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
+            daemon.waitForCommand(cmdIdx++);
+            runOnMain(instance, [&]() { ic->focusOut(); });
+            {
+                auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                    daemon.waitForCommand(cmdIdx++));
+                REQUIRE(cmd && (*cmd)["cmd"] == "cancel");
+                runOnMain(instance, [&]() {
+                    REQUIRE(ic->inputPanel().empty());
+                    ic->focusIn();
+                });
+            }
+
             // 6b. Daemon `state_changed`: echoes of engine-initiated
             // transitions are ignored; an unexpected daemon-side reset
             // (idle with no result) recovers to idle with feedback.
             runOnMain(instance, [&]() {
                 ic->setCapabilityFlags(fcitx::CapabilityFlag::Preedit);
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+                sendKey(ic.get(), fcitx::Key("Alt+space"));
             });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
@@ -538,8 +557,8 @@ int main() {
                 R"({"event":"state_changed","state":"recording"})");
             daemon.sendEvent(R"({"event":"partial_text","text":"仍在录音中"})");
             REQUIRE(waitOnMain(instance, [&]() {
-                return ic->inputPanel().clientPreedit().toString() ==
-                       "仍在录音中";
+                return ic->inputPanel().preedit().toString() == "仍在录音中" &&
+                       ic->inputPanel().clientPreedit().empty();
             }));
 
             // Unexpected daemon-side reset: idle arrives with no result
@@ -556,20 +575,20 @@ int main() {
             runOnMain(instance, [&]() { REQUIRE(ic->committed.size() == 3); });
 
             // A subsequent session works normally.
-            runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
-            });
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
                     daemon.waitForCommand(cmdIdx++));
                 REQUIRE(cmd && (*cmd)["cmd"] == "start_recording");
                 runOnMain(instance, [&]() {
-                    REQUIRE(ic->inputPanel().clientPreedit().toString() ==
+                    REQUIRE(ic->inputPanel().auxUp().toString() ==
                             "[Recording...]");
+                    REQUIRE(ic->inputPanel().clientPreedit().empty());
                 });
             }
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Escape));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Escape));
             });
             {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
@@ -585,12 +604,11 @@ int main() {
 
             // Same recovery while STOPPING: idle before any
             // transcribe_done clears the finalizing state.
-            runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
-            });
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
             daemon.waitForCommand(cmdIdx++);
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Return));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
             });
             daemon.waitForCommand(cmdIdx++);
             daemon.sendEvent(R"({"event":"state_changed","state":"idle"})");
@@ -605,11 +623,11 @@ int main() {
                 fcitx::RawConfig rawCfg;
                 rawCfg.setValueByPath("ShowActionMenu", "False");
                 addon->setConfig(rawCfg);
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+                sendKey(ic.get(), fcitx::Key("Alt+space"));
             });
             daemon.waitForCommand(cmdIdx++);
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Return));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
             });
             daemon.waitForCommand(cmdIdx++);
             daemon.sendEvent(
@@ -624,11 +642,11 @@ int main() {
                 fcitx::RawConfig rawCfg;
                 rawCfg.setValueByPath("ShowActionMenu", "True");
                 addon->setConfig(rawCfg);
-                sendKey(engine, entry, ic.get(), fcitx::Key("Alt+space"));
+                sendKey(ic.get(), fcitx::Key("Alt+space"));
             });
             daemon.waitForCommand(cmdIdx++);
             runOnMain(instance, [&]() {
-                sendKey(engine, entry, ic.get(), fcitx::Key(FcitxKey_Return));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
             });
             daemon.waitForCommand(cmdIdx++);
             daemon.sendEvent(

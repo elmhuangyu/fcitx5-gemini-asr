@@ -28,7 +28,6 @@ target_link_libraries(test_engine_integration PRIVATE
 target_compile_definitions(test_engine_integration PRIVATE
     BUILD_ADDON_SO="$<TARGET_FILE:gemini-voice>"
     BUILD_ADDON_CONF="${CMAKE_BINARY_DIR}/gemini-voice-addon.conf"
-    BUILD_IM_CONF="${CMAKE_BINARY_DIR}/gemini-voice.conf"
 )
 add_dependencies(test_engine_integration gemini-voice)
 add_test(NAME test_engine_integration COMMAND test_engine_integration)

@@ -6,6 +6,7 @@
 #include <atomic>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <fcitx-config/configuration.h>
 #include <fcitx-config/option.h>
@@ -16,8 +17,8 @@
 #include <fcitx-utils/key.h>
 #include <fcitx-utils/trackableobject.h>
 #include <fcitx/addoninstance.h>
+#include <fcitx/event.h>
 #include <fcitx/inputcontext.h>
-#include <fcitx/inputmethodengine.h>
 #include <fcitx/instance.h>
 
 namespace fcitx_gemini_voice {
@@ -39,7 +40,7 @@ FCITX_CONFIGURATION(
     fcitx::Option<std::string> language{this, "Language",
                                         _("Transcription Language"), ""};);
 
-class GeminiVoiceEngine : public fcitx::InputMethodEngineV2 {
+class GeminiVoiceEngine : public fcitx::AddonInstance {
 public:
     enum class State {
         IDLE,
@@ -53,20 +54,6 @@ public:
     explicit GeminiVoiceEngine(fcitx::Instance *instance);
     ~GeminiVoiceEngine() override;
 
-    void keyEvent(const fcitx::InputMethodEntry &entry,
-                  fcitx::KeyEvent &keyEvent) override;
-    void activate(const fcitx::InputMethodEntry &entry,
-                  fcitx::InputContextEvent &event) override;
-    void deactivate(const fcitx::InputMethodEntry &entry,
-                    fcitx::InputContextEvent &event) override;
-    void reset(const fcitx::InputMethodEntry &entry,
-               fcitx::InputContextEvent &event) override;
-
-    std::string subModeIconImpl(const fcitx::InputMethodEntry &entry,
-                                fcitx::InputContext &ic) override;
-    std::string subModeLabelImpl(const fcitx::InputMethodEntry &entry,
-                                 fcitx::InputContext &ic) override;
-
     const fcitx::Configuration *getConfig() const override { return &config_; }
     void setConfig(const fcitx::RawConfig &config) override;
     void reloadConfig() override;
@@ -78,6 +65,7 @@ private:
     std::string resolveSocketPath() const;
     void onDaemonMessage(const std::string &line);
     void onDaemonDisconnect();
+    void onKeyEvent(fcitx::KeyEvent &keyEvent);
 
     void handleIdleKey(fcitx::InputContext *ic, fcitx::KeyEvent &keyEvent);
     void handleRecordingKey(fcitx::InputContext *ic, fcitx::KeyEvent &keyEvent);
@@ -89,8 +77,8 @@ private:
     void handleProcessingKey(fcitx::InputContext *ic,
                              fcitx::KeyEvent &keyEvent);
 
-    void setPreedit(fcitx::InputContext *ic, const std::string &text,
-                    fcitx::TextFormatFlags flags);
+    void setPanelDisplay(fcitx::InputContext *ic, const std::string &auxUp,
+                         const std::string &preeditText);
     void clearSession(fcitx::InputContext *ic);
     void showActionMenu(fcitx::InputContext *ic);
     void showRefineSubmenu(fcitx::InputContext *ic);
@@ -101,6 +89,8 @@ private:
     GeminiVoiceConfig config_;
     std::shared_ptr<std::atomic<bool>> alive_;
     std::unique_ptr<SocketClient> socketClient_;
+    std::vector<std::unique_ptr<fcitx::HandlerTableEntry<fcitx::EventHandler>>>
+        eventHandlers_;
 
     State state_ = State::IDLE;
     fcitx::TrackableObjectReference<fcitx::InputContext> activeIC_;

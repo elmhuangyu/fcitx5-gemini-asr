@@ -25,15 +25,11 @@ target_compile_definitions(gemini-voice PRIVATE
 
 configure_file(gemini-voice-addon.conf.in
     "${CMAKE_CURRENT_BINARY_DIR}/gemini-voice-addon.conf" @ONLY)
-configure_file(gemini-voice.conf.in
-    "${CMAKE_CURRENT_BINARY_DIR}/gemini-voice.conf" @ONLY)
 
 install(TARGETS gemini-voice DESTINATION "${FCITX_INSTALL_ADDONDIR}")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/gemini-voice-addon.conf"
     RENAME gemini-voice.conf
     DESTINATION "${FCITX_INSTALL_PKGDATADIR}/addon")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/gemini-voice.conf"
-    DESTINATION "${FCITX_INSTALL_PKGDATADIR}/inputmethod")
 
 if(GETTEXT_MSGFMT_EXECUTABLE)
     add_subdirectory(po)

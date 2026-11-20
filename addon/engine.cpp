@@ -92,10 +92,37 @@ GeminiVoiceEngine::GeminiVoiceEngine(fcitx::Instance *instance)
                 onDaemonDisconnect();
             });
         });
+
+    eventHandlers_.push_back(instance_->watchEvent(
+        fcitx::EventType::InputContextKeyEvent,
+        fcitx::EventWatcherPhase::PreInputMethod, [this](fcitx::Event &event) {
+            onKeyEvent(static_cast<fcitx::KeyEvent &>(event));
+        }));
+
+    auto cancelOnContextEvent = [this](fcitx::Event &event) {
+        if (state_ == State::IDLE) {
+            return;
+        }
+        auto &icEvent = static_cast<fcitx::InputContextEvent &>(event);
+        auto *active = activeIC_.get();
+        if (!active || icEvent.inputContext() == active) {
+            cancelActiveSession(active ? active : icEvent.inputContext());
+        }
+    };
+    eventHandlers_.push_back(instance_->watchEvent(
+        fcitx::EventType::InputContextFocusOut,
+        fcitx::EventWatcherPhase::Default, cancelOnContextEvent));
+    eventHandlers_.push_back(instance_->watchEvent(
+        fcitx::EventType::InputContextReset, fcitx::EventWatcherPhase::Default,
+        cancelOnContextEvent));
+    eventHandlers_.push_back(instance_->watchEvent(
+        fcitx::EventType::InputContextSwitchInputMethod,
+        fcitx::EventWatcherPhase::Default, cancelOnContextEvent));
 }
 
 GeminiVoiceEngine::~GeminiVoiceEngine() {
     alive_->store(false);
+    eventHandlers_.clear();
     if (auto *ic = activeIC_.get()) {
         ic->inputPanel().reset();
     }
@@ -149,47 +176,7 @@ void GeminiVoiceEngine::setConfig(const fcitx::RawConfig &config) {
     }
 }
 
-std::string
-GeminiVoiceEngine::subModeIconImpl(const fcitx::InputMethodEntry & /*entry*/,
-                                   fcitx::InputContext & /*ic*/) {
-    return "audio-input-microphone";
-}
-
-std::string
-GeminiVoiceEngine::subModeLabelImpl(const fcitx::InputMethodEntry & /*entry*/,
-                                    fcitx::InputContext & /*ic*/) {
-    switch (state_) {
-    case State::RECORDING:
-        return "REC";
-    case State::STOPPING:
-    case State::PROCESSING:
-        return "AI";
-    default:
-        return "🎙";
-    }
-}
-
-void GeminiVoiceEngine::activate(const fcitx::InputMethodEntry & /*entry*/,
-                                 fcitx::InputContextEvent & /*event*/) {}
-
-void GeminiVoiceEngine::deactivate(const fcitx::InputMethodEntry &entry,
-                                   fcitx::InputContextEvent &event) {
-    reset(entry, event);
-}
-
-void GeminiVoiceEngine::reset(const fcitx::InputMethodEntry & /*entry*/,
-                              fcitx::InputContextEvent &event) {
-    if (state_ == State::IDLE) {
-        return;
-    }
-    auto *active = activeIC_.get();
-    if (!active || event.inputContext() == active) {
-        cancelActiveSession(active ? active : event.inputContext());
-    }
-}
-
-void GeminiVoiceEngine::keyEvent(const fcitx::InputMethodEntry & /*entry*/,
-                                 fcitx::KeyEvent &keyEvent) {
+void GeminiVoiceEngine::onKeyEvent(fcitx::KeyEvent &keyEvent) {
     if (keyEvent.isRelease()) {
         return;
     }
@@ -231,6 +218,10 @@ void GeminiVoiceEngine::handleIdleKey(fcitx::InputContext *ic,
         return;
     }
     keyEvent.filterAndAccept();
+    // Clear any active preedit from the underlying input method before
+    // starting a voice session; state_ is still IDLE so InputContextReset
+    // will not self-cancel.
+    ic->reset();
 
     std::string cmd =
         buildCommandJson("start_recording", {{"language", *config_.language}});
@@ -246,7 +237,7 @@ void GeminiVoiceEngine::handleIdleKey(fcitx::InputContext *ic,
     partialText_.clear();
     rawText_.clear();
     state_ = State::RECORDING;
-    setPreedit(ic, _("[Recording...]"), fcitx::TextFormatFlag::Underline);
+    setPanelDisplay(ic, _("[Recording...]"), "");
 }
 
 void GeminiVoiceEngine::handleRecordingKey(fcitx::InputContext *ic,
@@ -263,10 +254,7 @@ void GeminiVoiceEngine::handleRecordingKey(fcitx::InputContext *ic,
             return;
         }
         state_ = State::STOPPING;
-        setPreedit(ic,
-                   partialText_.empty() ? _("[Finalizing transcript...]")
-                                        : (partialText_ + " ..."),
-                   fcitx::TextFormatFlag::Underline);
+        setPanelDisplay(ic, _("[Finalizing transcript...]"), partialText_);
         return;
     }
 
@@ -389,27 +377,23 @@ void GeminiVoiceEngine::handleProcessingKey(fcitx::InputContext *ic,
     }
 }
 
-void GeminiVoiceEngine::setPreedit(fcitx::InputContext *ic,
-                                   const std::string &text,
-                                   fcitx::TextFormatFlags flags) {
+void GeminiVoiceEngine::setPanelDisplay(fcitx::InputContext *ic,
+                                        const std::string &auxUp,
+                                        const std::string &preeditText) {
     if (!ic) {
         return;
     }
-    fcitx::Text formatted;
-    if (!text.empty()) {
-        formatted.append(text, flags);
-        formatted.setCursor(static_cast<int>(text.size()));
+    fcitx::Text formattedPreedit;
+    if (!preeditText.empty()) {
+        formattedPreedit.append(preeditText, fcitx::TextFormatFlag::Underline);
+        formattedPreedit.setCursor(static_cast<int>(preeditText.size()));
     }
 
     auto &panel = ic->inputPanel();
-    if (ic->capabilityFlags().test(fcitx::CapabilityFlag::Preedit)) {
-        panel.setClientPreedit(formatted);
-        panel.setPreedit(fcitx::Text());
-        ic->updatePreedit();
-    } else {
-        panel.setClientPreedit(fcitx::Text());
-        panel.setPreedit(formatted);
-    }
+    panel.setClientPreedit(fcitx::Text());
+    panel.setAuxUp(auxUp.empty() ? fcitx::Text() : fcitx::Text(auxUp));
+    panel.setPreedit(formattedPreedit);
+    ic->updatePreedit();
     ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }
 
@@ -486,10 +470,9 @@ void GeminiVoiceEngine::showActionMenu(fcitx::InputContext *ic) {
     list->setGlobalCursorIndex(0);
 
     auto &panel = ic->inputPanel();
-    panel.setAuxUp(fcitx::Text());
     panel.setAuxDown(fcitx::Text());
     panel.setCandidateList(std::move(list));
-    setPreedit(ic, rawText_, fcitx::TextFormatFlag::Underline);
+    setPanelDisplay(ic, "", rawText_);
 }
 
 void GeminiVoiceEngine::showRefineSubmenu(fcitx::InputContext *ic) {
@@ -534,10 +517,9 @@ void GeminiVoiceEngine::showRefineSubmenu(fcitx::InputContext *ic) {
     list->setGlobalCursorIndex(0);
 
     auto &panel = ic->inputPanel();
-    panel.setAuxUp(fcitx::Text(_("Refine ▸")));
     panel.setAuxDown(fcitx::Text());
     panel.setCandidateList(std::move(list));
-    setPreedit(ic, rawText_, fcitx::TextFormatFlag::Underline);
+    setPanelDisplay(ic, _("Refine ▸"), rawText_);
 }
 
 void GeminiVoiceEngine::triggerPostProcess(fcitx::InputContext *ic,
@@ -556,10 +538,9 @@ void GeminiVoiceEngine::triggerPostProcess(fcitx::InputContext *ic,
     }
 
     state_ = State::PROCESSING;
-    ic->inputPanel().setAuxUp(fcitx::Text());
     ic->inputPanel().setAuxDown(fcitx::Text());
     ic->inputPanel().setCandidateList(nullptr);
-    setPreedit(ic, _("[AI Processing...]"), fcitx::TextFormatFlag::Underline);
+    setPanelDisplay(ic, _("[AI Processing...]"), "");
 }
 
 void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
@@ -588,9 +569,7 @@ void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
         }
         auto it = msg.find("text");
         partialText_ = (it != msg.end()) ? it->second : "";
-        setPreedit(ic,
-                   partialText_.empty() ? _("[Recording...]") : partialText_,
-                   fcitx::TextFormatFlag::Underline);
+        setPanelDisplay(ic, _("[Recording...]"), partialText_);
         return;
     }
 
