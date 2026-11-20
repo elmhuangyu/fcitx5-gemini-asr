@@ -955,6 +955,49 @@ int main() {
                 });
             }
 
+            // 7e. Explicit TranslateLanguages=["en"] overrides daemon targets
+            {
+                runOnMain(instance, [&]() {
+                    fcitx::RawConfig rawCfg;
+                    rawCfg.setValueByPath("SocketPath", sockPath);
+                    rawCfg.setValueByPath("TranslateLanguages/0", "en");
+                    addon->setConfig(rawCfg);
+                    sendKey(ic.get(), fcitx::Key("Alt+space"));
+                });
+                daemon.waitForCommand(cmdIdx++);
+                runOnMain(instance, [&]() {
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
+                });
+                daemon.waitForCommand(cmdIdx++);
+                daemon.sendEvent(
+                    R"({"event":"transcribe_done","raw_text":"你好","translate_targets":[{"action":"translate_en","label":"English"},{"action":"translate_ja","label":"Japanese"}]})");
+                REQUIRE(waitOnMain(instance, [&]() {
+                    auto cl = ic->inputPanel().candidateList();
+                    return cl && cl->size() == 4;
+                }));
+                runOnMain(instance, [&]() {
+                    auto cl = ic->inputPanel().candidateList();
+                    REQUIRE(cl->candidate(2).text().toString() ==
+                            "[Translate] Translate to English");
+                    sendKey(ic.get(), fcitx::Key(FcitxKey_3));
+                });
+                {
+                    auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                        daemon.waitForCommand(cmdIdx++));
+                    REQUIRE(cmd && (*cmd)["cmd"] == "post_process" &&
+                            (*cmd)["action"] == "translate_en");
+                }
+                daemon.sendEvent(R"({"event":"final_result","text":"Hello"})");
+                REQUIRE(waitOnMain(instance,
+                                   [&]() { return ic->committed.size() == 11; }));
+                REQUIRE(ic->committed[10] == "Hello");
+                runOnMain(instance, [&]() {
+                    fcitx::RawConfig rawCfg;
+                    rawCfg.setValueByPath("SocketPath", sockPath);
+                    addon->setConfig(rawCfg);
+                });
+            }
+
             // 8. Unload safety: capture CandidateList before engine teardown
             runOnMain(instance, [&]() {
                 fcitx::RawConfig rawCfg;

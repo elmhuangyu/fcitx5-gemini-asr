@@ -54,7 +54,7 @@ FCITX_CONFIGURATION(
         this,
         "TranslateLanguages",
         _("Translation Target Languages"),
-        {"en"}};);
+        {}};);
 
 class GeminiVoiceEngine : public fcitx::AddonInstance {
 public:

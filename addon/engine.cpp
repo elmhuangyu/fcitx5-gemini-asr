@@ -788,17 +788,11 @@ void GeminiVoiceEngine::cancelActiveSession(fcitx::InputContext *ic) {
 std::vector<TranslateTarget>
 GeminiVoiceEngine::effectiveTranslateTargets() const {
     auto configured = resolveConfiguredTargets(*config_.translateLanguages);
-    const bool hasCustomFcitxConfig =
-        configured.size() > 1 ||
-        (configured.size() == 1 && configured[0].action != "translate_en");
-    if (hasCustomFcitxConfig) {
+    if (!configured.empty()) {
         return configured;
     }
     if (!translateTargets_.empty()) {
         return translateTargets_;
-    }
-    if (!configured.empty()) {
-        return configured;
     }
     return {{"translate_en", "English"}};
 }
