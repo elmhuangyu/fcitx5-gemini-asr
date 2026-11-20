@@ -86,7 +86,8 @@ gemini-voice config set ime.trigger_key Alt+space
 gemini-voice config set live.language auto          # auto (85+ languages), or comma-separated hints like cmn-Hans-CN,en-US (zh-CN aliases to cmn-Hans-CN)
 gemini-voice config set live.mode VERBATIM          # VERBATIM (literal) or SMART (disfluency cleanup)
 gemini-voice config set live.custom_vocabulary Fcitx5,PipeWire,Gemini
-gemini-voice config set live.vad_silence_ms 1200
+gemini-voice config set live.vad_silence_ms 1200       # Silence timeout in ms before auto-stop (0 disables auto-stop)
+gemini-voice config set live.vad_threshold 80          # RMS speech threshold (default 300; lower for quieter mics)
 gemini-voice config set post_process.prefetch refine_fix_typos,refine_formal
 gemini-voice config set connection.proxy socks5://127.0.0.1:1080
 
@@ -138,8 +139,8 @@ GEMINI_API_KEY="your-key" ~/.local/bin/gemini-voice-daemon
 
 ## Usage & Hotkeys
 
-1. Switch to **Gemini Voice** in Fcitx5 (`fcitx5-configtool`).
-2. Press **`Alt+space`** (configurable via `gemini-voice config set ime.trigger_key ...` or `fcitx5-configtool`) to start recording. Live transcription streams at the cursor (`CapabilityFlag::Preedit`), automatically falling back to the candidate panel preedit on clients without inline preedit support.
+1. Enable the **Gemini Voice** module in Fcitx5 (no need to switch away from your current input method such as Rime or `keyboard-us`; in `--user` installs ensure `FCITX_ADDON_DIRS` includes `~/.local/lib/fcitx5`, e.g. in `~/.config/environment.d/fcitx5.conf`).
+2. Press **`Alt+space`** (configurable via `gemini-voice config set ime.trigger_key ...` or `fcitx5-configtool`) in any input method to start recording. Live transcription streams inside Fcitx5's floating candidate panel (`AuxUp` / `Preedit`) without modifying the application's input box until committed.
 3. Press **`Alt+space`** or **`Return`** (or pause for `vad_silence_ms`) to stop recording:
    - In **`menu`** mode (`ShowActionMenu = True`), the Rime-style action menu opens:
      - `1` / `Space` / `Return`: Commit raw transcript (`[Raw]`)
@@ -171,6 +172,7 @@ Common recipes defined in `Justfile`:
 - **Daemon connection error**: Run `gemini-voice status` or `systemctl --user status gemini-voice.service` and confirm `$XDG_RUNTIME_DIR/gemini-ime.sock` exists (`0600`).
 - **Credential decryption failure**: Run `gemini-voice auth verify`; if `CREDENTIALS_DIRECTORY` is set by systemd, the encrypted credential file must exist and match the active host/user scope.
 - **No audio captured**: Verify `pw-record --raw --rate=16000 --channels=1 --format=s16 - > /dev/null` works with your PipeWire microphone source.
+- **Recording stops prematurely mid-sentence (or never auto-stops)**: Check `journalctl --user -u gemini-voice.service -n 20` for `live session vad auto-stop` and compare `peak_rms` against `threshold`. If your microphone level is quiet (e.g. `peak_rms` ~500 with default `threshold=300`), lower `live.vad_threshold` (e.g. `gemini-voice config set live.vad_threshold 80`) or increase `live.vad_silence_ms` (e.g. `2000`, or `0` to disable auto-stop). If room noise prevents auto-stop, raise `live.vad_threshold`.
 
 ## License
 
