@@ -75,7 +75,7 @@ if [[ -w "${CMAKE_PREFIX}" ]]; then
 else
     sudo cmake --install "${ROOT_DIR}/addon/build"
 fi
-if [[ "${CMAKE_PREFIX}" != "$HOME/.local" ]]; then
+if [[ "${CMAKE_PREFIX%/}" != "$HOME/.local" ]]; then
     rm -f "$HOME/.local/lib/fcitx5/libgemini-voice.so" \
           "$HOME/.local/lib64/fcitx5/libgemini-voice.so" \
           "$HOME/.local/share/fcitx5/addon/gemini-voice.conf" \
