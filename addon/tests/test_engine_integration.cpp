@@ -894,8 +894,8 @@ int main() {
                             (*cmd)["action"] == "translate_ru");
                 }
                 daemon.sendEvent(R"({"event":"final_result","text":"Привет"})");
-                REQUIRE(waitOnMain(instance,
-                                   [&]() { return ic->committed.size() == 9; }));
+                REQUIRE(waitOnMain(
+                    instance, [&]() { return ic->committed.size() == 9; }));
                 REQUIRE(ic->committed[8] == "Привет");
 
                 // Test digit selection on page 2 (Page_Down + '2' -> Italian)
@@ -920,7 +920,8 @@ int main() {
                     REQUIRE(cl->toPageable()->currentPage() == 1);
                     REQUIRE(cl->cursorIndex() == 0);
 
-                    // Page_Up returns to page 0 and skips the header at index 0.
+                    // Page_Up returns to page 0 and skips the header at index
+                    // 0.
                     sendKey(ic.get(), fcitx::Key(FcitxKey_Page_Up));
                     REQUIRE(cl->toPageable()->currentPage() == 0);
                     REQUIRE(cl->cursorIndex() == 1);
@@ -938,18 +939,18 @@ int main() {
                             (*cmd)["action"] == "translate_it");
                 }
                 daemon.sendEvent(R"({"event":"final_result","text":"Ciao"})");
-                REQUIRE(waitOnMain(instance,
-                                   [&]() { return ic->committed.size() == 10; }));
+                REQUIRE(waitOnMain(
+                    instance, [&]() { return ic->committed.size() == 10; }));
                 REQUIRE(ic->committed[9] == "Ciao");
             }
 
             // 7d. Disconnected daemon must NOT call ic->reset() on trigger
             {
                 std::atomic<int> resetEvents{0};
-                auto resetWatcher = instance.watchEvent(
-                    fcitx::EventType::InputContextReset,
-                    fcitx::EventWatcherPhase::Default,
-                    [&](fcitx::Event &) { ++resetEvents; });
+                auto resetWatcher =
+                    instance.watchEvent(fcitx::EventType::InputContextReset,
+                                        fcitx::EventWatcherPhase::Default,
+                                        [&](fcitx::Event &) { ++resetEvents; });
                 const std::string badSockPath =
                     (root / "nonexistent.sock").string();
                 runOnMain(instance, [&]() {
@@ -1000,8 +1001,8 @@ int main() {
                             (*cmd)["action"] == "translate_en");
                 }
                 daemon.sendEvent(R"({"event":"final_result","text":"Hello"})");
-                REQUIRE(waitOnMain(instance,
-                                   [&]() { return ic->committed.size() == 11; }));
+                REQUIRE(waitOnMain(
+                    instance, [&]() { return ic->committed.size() == 11; }));
                 REQUIRE(ic->committed[10] == "Hello");
                 runOnMain(instance, [&]() {
                     fcitx::RawConfig rawCfg;

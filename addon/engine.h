@@ -51,10 +51,7 @@ FCITX_CONFIGURATION(
         this, "PreeditMaxWidth", _("Preedit Line Wrap Width"), 80,
         fcitx::IntConstrain(0, 500)};
     fcitx::Option<std::vector<std::string>> translateLanguages{
-        this,
-        "TranslateLanguages",
-        _("Translation Target Languages"),
-        {}};);
+        this, "TranslateLanguages", _("Translation Target Languages"), {}};);
 
 class GeminiVoiceEngine : public fcitx::AddonInstance {
 public:
