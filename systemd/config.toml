@@ -13,6 +13,7 @@ vad_silence_ms = 1200
 [post_process]
 model = "gemini-3.5-flash-lite"
 prefetch = ["refine_fix_typos", "refine_formal"]
+translate_languages = ["en"]
 
 [post_process.models]
 # Optional per-action model overrides (empty inherits post_process.model):

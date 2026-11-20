@@ -1,6 +1,7 @@
 #ifndef FCITX5_GEMINI_VOICE_ENGINE_H
 #define FCITX5_GEMINI_VOICE_ENGINE_H
 
+#include "json_util.h"
 #include "socket_client.h"
 
 #include <atomic>
@@ -48,7 +49,12 @@ FCITX_CONFIGURATION(
                                                _("Recording Prefix"), "🎙️"};
     fcitx::Option<int, fcitx::IntConstrain> preeditMaxWidth{
         this, "PreeditMaxWidth", _("Preedit Line Wrap Width"), 80,
-        fcitx::IntConstrain(0, 500)};);
+        fcitx::IntConstrain(0, 500)};
+    fcitx::Option<std::vector<std::string>> translateLanguages{
+        this,
+        "TranslateLanguages",
+        _("Translation Target Languages"),
+        {"en"}};);
 
 class GeminiVoiceEngine : public fcitx::AddonInstance {
 public:
@@ -58,6 +64,7 @@ public:
         STOPPING,
         ACTION_MENU,
         SUBMENU_REFINE,
+        SUBMENU_TRANSLATE,
         PROCESSING,
     };
 
@@ -82,8 +89,7 @@ private:
     void handleStoppingKey(fcitx::InputContext *ic, fcitx::KeyEvent &keyEvent);
     void handleActionMenuKey(fcitx::InputContext *ic,
                              fcitx::KeyEvent &keyEvent);
-    void handleSubmenuRefineKey(fcitx::InputContext *ic,
-                                fcitx::KeyEvent &keyEvent);
+    void handleSubmenuKey(fcitx::InputContext *ic, fcitx::KeyEvent &keyEvent);
     void handleProcessingKey(fcitx::InputContext *ic,
                              fcitx::KeyEvent &keyEvent);
 
@@ -98,7 +104,10 @@ private:
     void clearSession(fcitx::InputContext *ic);
     void showActionMenu(fcitx::InputContext *ic);
     void showRefineSubmenu(fcitx::InputContext *ic);
-    void triggerPostProcess(fcitx::InputContext *ic, const std::string &action);
+    void showTranslateSubmenu(fcitx::InputContext *ic);
+    std::vector<TranslateTarget> effectiveTranslateTargets() const;
+    void triggerPostProcess(fcitx::InputContext *ic, const std::string &action,
+                            const std::string &targetLabel = "");
     void cancelActiveSession(fcitx::InputContext *ic);
 
     fcitx::Instance *instance_;
@@ -112,6 +121,7 @@ private:
     fcitx::TrackableObjectReference<fcitx::InputContext> activeIC_;
     std::string partialText_;
     std::string rawText_;
+    std::vector<TranslateTarget> translateTargets_;
 };
 
 } // namespace fcitx_gemini_voice

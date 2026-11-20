@@ -131,8 +131,20 @@ func TestCLI_ConfigSetGetShow(t *testing.T) {
 		t.Fatalf("config show failed: %s", stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "ime.mode:") || !strings.Contains(out, "live.mode:") || !strings.Contains(out, "live.custom_vocabulary:") || !strings.Contains(out, "model.as_prompt:") {
+	if !strings.Contains(out, "ime.mode:") || !strings.Contains(out, "live.mode:") || !strings.Contains(out, "live.custom_vocabulary:") || !strings.Contains(out, "post_process.translate_languages:") || !strings.Contains(out, "model.as_prompt:") {
 		t.Fatalf("unexpected config show output:\n%s", out)
+	}
+
+	// Setting post_process.translate_languages updates EffectiveActionNames and prompt lookup.
+	if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "post_process.translate_languages", "en,ja"}, deps); code != 0 {
+		t.Fatalf("config set translate_languages failed: %s", stderr.String())
+	}
+	stdout.Reset()
+	if code := runCLI("gemini-voice", []string{"config", "get", "-config", cfgPath, "-fcitx-config", fcitxPath, "post_process.translate_languages"}, deps); code != 0 {
+		t.Fatalf("config get translate_languages failed: %s", stderr.String())
+	}
+	if strings.TrimSpace(stdout.String()) != "en,ja" {
+		t.Fatalf("translate_languages = %q, want %q", stdout.String(), "en,ja")
 	}
 
 	// Invalid key/value rejected.

@@ -158,6 +158,10 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	}
 	form = clearChars(form, len("ftp://bad"))
 	form = typeRunes(form, "socks5://127.0.0.1:1080")
+	form = pressSpecial(form, tea.KeyDown)
+
+	// Translation target languages: append ", ja" to default "en".
+	form = typeRunes(form, ", ja")
 	form = pressSpecial(form, tea.KeyEnter)
 
 	// Group 6: API key (empty rejected, masked input hides raw key from View()).
@@ -205,6 +209,9 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	if !reflect.DeepEqual(cfg.LiveTranscribe.CustomVocabulary, wantVocab) {
 		t.Fatalf("custom_vocabulary = %#v, want %#v", cfg.LiveTranscribe.CustomVocabulary, wantVocab)
 	}
+	if !reflect.DeepEqual(cfg.PostProcess.TranslateLanguages, []string{"en", "ja"}) {
+		t.Fatalf("PostProcess.TranslateLanguages = %#v, want [en ja]", cfg.PostProcess.TranslateLanguages)
+	}
 	if cfg.Connection.Proxy != "socks5://127.0.0.1:1080" {
 		t.Fatalf("proxy = %q", cfg.Connection.Proxy)
 	}
@@ -245,6 +252,7 @@ func TestBuildSetupForm_ConditionalHiddenGroupsAndAbort(t *testing.T) {
 		form = pressSpecial(form, tea.KeyEnter) // vocab
 		form = pressSpecial(form, tea.KeyEnter) // triggerKeys
 		form = pressSpecial(form, tea.KeyEnter) // proxy
+		form = pressSpecial(form, tea.KeyEnter) // translateLanguages
 
 		// Group 6a: Confirm keep existing credential (default false -> Enter), skipping Group 6b API key input.
 		if !strings.Contains(ansi.Strip(form.View()), "Encrypted credential exists") {
@@ -345,8 +353,8 @@ func TestApplySetupFormState_DisableOverridesClearsStaleModels(t *testing.T) {
 		}
 		form = pressSpecial(form, tea.KeyEnter)
 
-		// Group 5: keep customVocabulary, triggerKeys, proxy (3 fields).
-		for i := 0; i < 3; i++ {
+		// Group 5: keep customVocabulary, triggerKeys, proxy, translateLanguages (4 fields).
+		for i := 0; i < 4; i++ {
 			form = pressSpecial(form, tea.KeyEnter)
 		}
 

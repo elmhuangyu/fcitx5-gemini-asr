@@ -16,6 +16,7 @@
 using fcitx_gemini_voice::buildCommandJson;
 using fcitx_gemini_voice::escapeJsonString;
 using fcitx_gemini_voice::parseFlatJsonObject;
+using fcitx_gemini_voice::parseTranslateTargets;
 
 int main() {
     // 1. Escaping and command encoding
@@ -60,6 +61,20 @@ int main() {
     REQUIRE(!parseFlatJsonObject("{\"event\":\"unterminated").has_value());
     REQUIRE(!parseFlatJsonObject("{\"event\":\"\x01\"}").has_value());
     REQUIRE(!parseFlatJsonObject("{\"event\":\"\\uD800\"}").has_value());
+
+    // 5. Parse translate_targets array
+    {
+        auto targets = parseTranslateTargets(
+            R"({"event":"transcribe_done","raw_text":"hi","translate_targets":[{"action":"translate_en","label":"English"},{"action":"translate_ja","label":"Japanese"}]})");
+        REQUIRE(targets.size() == 2);
+        REQUIRE(targets[0].action == "translate_en");
+        REQUIRE(targets[0].label == "English");
+        REQUIRE(targets[1].action == "translate_ja");
+        REQUIRE(targets[1].label == "Japanese");
+    }
+    REQUIRE(
+        parseTranslateTargets(R"({"event":"transcribe_done","raw_text":"hi"})")
+            .empty());
 
     std::cout << "test_json_util PASSED\n";
     return 0;

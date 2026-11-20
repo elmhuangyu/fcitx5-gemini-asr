@@ -332,6 +332,43 @@ func TestSocketServer_CancelMidRecordingAndPostProcess(t *testing.T) {
 	}
 }
 
+func TestSocketServer_DynamicTranslateTargetLabel(t *testing.T) {
+	sockPath, cancel, _ := startTestSocketServer(t, &fakeTranscriber{mode: "ok"}, newFakePostProcessor())
+	defer cancel()
+
+	conn, err := net.Dial("unix", sockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	scanner := bufio.NewScanner(conn)
+
+	sendCmd(t, conn, ClientCommand{Cmd: "start_recording"})
+	if ev := readEvent(t, scanner); ev.Event != "state_changed" || ev.State != "recording" {
+		t.Fatalf("got %+v", ev)
+	}
+	if ev := readEvent(t, scanner); ev.Event != "partial_text" {
+		t.Fatalf("got %+v", ev)
+	}
+	sendCmd(t, conn, ClientCommand{Cmd: "stop_recording"})
+	if ev := readEvent(t, scanner); ev.Event != "partial_text" {
+		t.Fatalf("got %+v", ev)
+	}
+	if ev := readEvent(t, scanner); ev.Event != "transcribe_done" {
+		t.Fatalf("got %+v", ev)
+	}
+
+	// Frontend can request a language added in fcitx5-configtool without modifying config.toml or restarting daemon.
+	sendCmd(t, conn, ClientCommand{Cmd: "post_process", Action: "translate_ja", TargetLabel: "Japanese"})
+	if ev := readEvent(t, scanner); ev.Event != "state_changed" || ev.State != "processing" {
+		t.Fatalf("got %+v", ev)
+	}
+	if ev := readEvent(t, scanner); ev.Event != "final_result" || ev.Text != "[translate_ja] 今天下午三点我们开个会" {
+		t.Fatalf("got %+v", ev)
+	}
+}
+
 func TestSocketServer_ClientDisconnectCancelsCapture(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "disc.sock")

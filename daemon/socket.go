@@ -19,17 +19,19 @@ import (
 const defaultSocketWriteTimeout = 5 * time.Second
 
 type ClientCommand struct {
-	Cmd      string `json:"cmd"`
-	Language string `json:"language,omitempty"`
-	Action   string `json:"action,omitempty"`
+	Cmd         string `json:"cmd"`
+	Language    string `json:"language,omitempty"`
+	Action      string `json:"action,omitempty"`
+	TargetLabel string `json:"target_label,omitempty"`
 }
 
 type ServerEvent struct {
-	Event   string `json:"event"`
-	State   string `json:"state,omitempty"`
-	Text    string `json:"text,omitempty"`
-	RawText string `json:"raw_text,omitempty"`
-	Message string `json:"message,omitempty"`
+	Event            string            `json:"event"`
+	State            string            `json:"state,omitempty"`
+	Text             string            `json:"text,omitempty"`
+	RawText          string            `json:"raw_text,omitempty"`
+	Message          string            `json:"message,omitempty"`
+	TranslateTargets []TranslateTarget `json:"translate_targets,omitempty"`
 }
 
 type APIKeyLoader func(credName, fallbackEnv string) (string, error)
@@ -285,7 +287,7 @@ func (cs *clientSession) dispatch(cmd ClientCommand) {
 	case "cancel":
 		cs.handleCancel()
 	case "post_process":
-		cs.handlePostProcess(cmd.Action)
+		cs.handlePostProcess(cmd.Action, cmd.TargetLabel)
 	default:
 		cs.sendUnchecked(ServerEvent{
 			Event:   "error",
@@ -380,14 +382,15 @@ func (cs *clientSession) handleStartRecording(reqLang string) {
 		}
 
 		rawText = strings.TrimSpace(rawText)
+		latestCfg := cs.server.deps.ConfigManager.Get()
 		if rawText != "" {
-			latestCfg := cs.server.deps.ConfigManager.Get()
 			cs.prefetch.StartPrefetch(cs.baseCtx, rawText, latestCfg.PostProcess.Prefetch, cs.makePostProcessFn(latestCfg, apiKey))
 		}
 
 		cs.sendIfSession(sid, ServerEvent{
-			Event:   "transcribe_done",
-			RawText: rawText,
+			Event:            "transcribe_done",
+			RawText:          rawText,
+			TranslateTargets: latestCfg.TranslateTargets(),
 		})
 	}()
 }
@@ -428,7 +431,7 @@ func (cs *clientSession) handleCancel() {
 	})
 }
 
-func (cs *clientSession) handlePostProcess(action string) {
+func (cs *clientSession) handlePostProcess(action, targetLabel string) {
 	action = strings.TrimSpace(action)
 	if action == "" {
 		cs.sendUnchecked(ServerEvent{
@@ -447,7 +450,7 @@ func (cs *clientSession) handlePostProcess(action string) {
 	}
 
 	cfg := cs.server.deps.ConfigManager.Get()
-	if prompt, ok := cfg.Prompts[action]; !ok || strings.TrimSpace(prompt) == "" {
+	if prompt, ok := cfg.PromptForActionWithLabel(action, targetLabel); !ok || strings.TrimSpace(prompt) == "" {
 		cs.sendUnchecked(ServerEvent{
 			Event:   "error",
 			Message: fmt.Sprintf("unknown post_process action %q", action),
@@ -478,7 +481,7 @@ func (cs *clientSession) handlePostProcess(action string) {
 		State: "processing",
 	})
 
-	fn := cs.makePostProcessFn(cfg, apiKey)
+	fn := cs.makePostProcessFn(cfg, apiKey, targetLabel)
 	cs.wg.Add(1)
 	go func() {
 		defer cs.wg.Done()
@@ -502,8 +505,17 @@ func (cs *clientSession) handlePostProcess(action string) {
 	}()
 }
 
-func (cs *clientSession) makePostProcessFn(cfg Config, apiKey string) PostProcessFunc {
+func (cs *clientSession) makePostProcessFn(cfg Config, apiKey string, targetLabels ...string) PostProcessFunc {
+	targetLabel := ""
+	if len(targetLabels) > 0 {
+		targetLabel = targetLabels[0]
+	}
 	return func(ctx context.Context, action, rawText string) (string, error) {
+		if targetLabel != "" {
+			if pp, ok := cs.server.deps.PostProcessor.(*PostProcessor); ok {
+				return pp.GenerateWithLabel(ctx, cfg, apiKey, action, targetLabel, rawText)
+			}
+		}
 		return cs.server.deps.PostProcessor.Generate(ctx, cfg, apiKey, action, rawText)
 	}
 }

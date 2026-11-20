@@ -35,6 +35,9 @@ msgstr "录音状态前缀"
 msgid "Preedit Line Wrap Width"
 msgstr "预编辑文本自动换行宽度"
 
+msgid "Translation Target Languages"
+msgstr "翻译目标语言"
+
 #: addon/engine.cpp:241 addon/engine.cpp:553
 msgid "Gemini Voice Daemon not connected"
 msgstr "Gemini Voice Daemon 未连接"
@@ -62,6 +65,15 @@ msgstr "[Refine ▸] 润色 (改错字 / 轻松 / 正式 / 提示词)"
 #: addon/engine.cpp:470
 msgid "[Translate] Translate to English"
 msgstr "[Translate] 译为英文"
+
+msgid "[Translate] Translate to "
+msgstr "[Translate] 译为 "
+
+msgid "[Translate ▸] Translate to ..."
+msgstr "[Translate ▸] 译为 ..."
+
+msgid "Translate ▸"
+msgstr "Translate ▸"
 
 #: addon/engine.cpp:478
 msgid "[Ask AI] Use speech as prompt to generate response"

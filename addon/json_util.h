@@ -7,8 +7,14 @@
 #include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace fcitx_gemini_voice {
+
+struct TranslateTarget {
+    std::string action;
+    std::string label;
+};
 
 std::string escapeJsonString(std::string_view input);
 
@@ -22,6 +28,10 @@ std::string buildCommandJson(
 // are validated and skipped. Returns std::nullopt on malformed JSON.
 std::optional<std::unordered_map<std::string, std::string>>
 parseFlatJsonObject(std::string_view line);
+
+// Extracts the "translate_targets" array of {action, label} objects from a
+// single-line JSON object. Returns empty on absence or malformed input.
+std::vector<TranslateTarget> parseTranslateTargets(std::string_view line);
 
 } // namespace fcitx_gemini_voice
 

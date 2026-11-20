@@ -19,22 +19,24 @@ const (
 )
 
 type FcitxAddonConfig struct {
-	TriggerKeys     []string
-	ShowActionMenu  bool
-	SocketPath      string
-	Language        string
-	RecordingPrefix string
-	PreeditMaxWidth int
+	TriggerKeys        []string
+	TranslateLanguages []string
+	ShowActionMenu     bool
+	SocketPath         string
+	Language           string
+	RecordingPrefix    string
+	PreeditMaxWidth    int
 }
 
 func DefaultFcitxAddonConfig() FcitxAddonConfig {
 	return FcitxAddonConfig{
-		TriggerKeys:     []string{"Alt+space"},
-		ShowActionMenu:  true,
-		SocketPath:      DefaultFcitxSocketPath,
-		Language:        "",
-		RecordingPrefix: DefaultRecordingPrefix,
-		PreeditMaxWidth: DefaultPreeditMaxWidth,
+		TriggerKeys:        []string{"Alt+space"},
+		TranslateLanguages: []string{"en"},
+		ShowActionMenu:     true,
+		SocketPath:         DefaultFcitxSocketPath,
+		Language:           "",
+		RecordingPrefix:    DefaultRecordingPrefix,
+		PreeditMaxWidth:    DefaultPreeditMaxWidth,
 	}
 }
 
@@ -88,7 +90,9 @@ func LoadFcitxAddonConfig(path string) (FcitxAddonConfig, error) {
 		val string
 	}
 	var triggerEntries []indexedKey
+	var translateEntries []indexedKey
 	seenTriggerSection := false
+	seenTranslateSection := false
 	section := ""
 
 	lines := strings.Split(string(data), "\n")
@@ -99,8 +103,11 @@ func LoadFcitxAddonConfig(path string) (FcitxAddonConfig, error) {
 		}
 		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
 			section = strings.TrimSpace(line[1 : len(line)-1])
-			if section == "TriggerKey" {
+			switch section {
+			case "TriggerKey":
 				seenTriggerSection = true
+			case "TranslateLanguages":
+				seenTranslateSection = true
 			}
 			continue
 		}
@@ -131,6 +138,10 @@ func LoadFcitxAddonConfig(path string) (FcitxAddonConfig, error) {
 			if idx, convErr := strconv.Atoi(k); convErr == nil && v != "" {
 				triggerEntries = append(triggerEntries, indexedKey{idx: idx, val: v})
 			}
+		case "TranslateLanguages":
+			if idx, convErr := strconv.Atoi(k); convErr == nil && v != "" {
+				translateEntries = append(translateEntries, indexedKey{idx: idx, val: v})
+			}
 		}
 	}
 
@@ -143,6 +154,16 @@ func LoadFcitxAddonConfig(path string) (FcitxAddonConfig, error) {
 			keys = append(keys, item.val)
 		}
 		cfg.TriggerKeys = keys
+	}
+	if seenTranslateSection && len(translateEntries) > 0 {
+		sort.Slice(translateEntries, func(i, j int) bool {
+			return translateEntries[i].idx < translateEntries[j].idx
+		})
+		langs := make([]string, 0, len(translateEntries))
+		for _, item := range translateEntries {
+			langs = append(langs, item.val)
+		}
+		cfg.TranslateLanguages = langs
 	}
 
 	return cfg, nil
@@ -183,6 +204,19 @@ func renderFcitxAddonConfig(cfg FcitxAddonConfig) []byte {
 	b.WriteString("[TriggerKey]\n")
 	for i, k := range triggerKeys {
 		trimmed := strings.TrimSpace(k)
+		if trimmed == "" {
+			continue
+		}
+		fmt.Fprintf(&b, "%d=%s\n", i, quoteFcitxValue(trimmed))
+	}
+	translateLangs := cfg.TranslateLanguages
+	if len(translateLangs) == 0 {
+		translateLangs = []string{"en"}
+	}
+	b.WriteByte('\n')
+	b.WriteString("[TranslateLanguages]\n")
+	for i, l := range translateLangs {
+		trimmed := strings.TrimSpace(l)
 		if trimmed == "" {
 			continue
 		}

@@ -95,6 +95,9 @@ install -m 0644 "${ROOT_DIR}/systemd/gemini-voice.service" "$HOME/.config/system
 
 if command -v systemctl >/dev/null 2>&1; then
     systemctl --user daemon-reload >/dev/null 2>&1 || true
+    if systemctl --user is-active --quiet gemini-voice.service 2>/dev/null; then
+        systemctl --user restart gemini-voice.service || true
+    fi
 fi
 
 cat <<'EOF'

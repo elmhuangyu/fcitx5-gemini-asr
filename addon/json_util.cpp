@@ -395,4 +395,98 @@ parseFlatJsonObject(std::string_view line) {
     return result;
 }
 
+std::vector<TranslateTarget> parseTranslateTargets(std::string_view line) {
+    JsonCursor cur(line);
+    cur.skipWs();
+    if (!cur.consume('{')) {
+        return {};
+    }
+    cur.skipWs();
+    if (cur.consume('}')) {
+        return {};
+    }
+
+    std::vector<TranslateTarget> targets;
+    while (true) {
+        cur.skipWs();
+        auto key = cur.parseString();
+        if (!key.has_value()) {
+            return {};
+        }
+        cur.skipWs();
+        if (!cur.consume(':')) {
+            return {};
+        }
+        cur.skipWs();
+        if (*key == "translate_targets" && cur.peek() == '[') {
+            cur.consume('[');
+            cur.skipWs();
+            if (!cur.consume(']')) {
+                while (true) {
+                    cur.skipWs();
+                    if (!cur.consume('{')) {
+                        return {};
+                    }
+                    TranslateTarget item;
+                    cur.skipWs();
+                    if (!cur.consume('}')) {
+                        while (true) {
+                            cur.skipWs();
+                            auto fk = cur.parseString();
+                            if (!fk.has_value()) {
+                                return {};
+                            }
+                            cur.skipWs();
+                            if (!cur.consume(':')) {
+                                return {};
+                            }
+                            cur.skipWs();
+                            if (cur.peek() == '"') {
+                                auto fv = cur.parseString();
+                                if (!fv.has_value()) {
+                                    return {};
+                                }
+                                if (*fk == "action") {
+                                    item.action = std::move(*fv);
+                                } else if (*fk == "label") {
+                                    item.label = std::move(*fv);
+                                }
+                            } else if (!cur.skipValue()) {
+                                return {};
+                            }
+                            cur.skipWs();
+                            if (cur.consume('}')) {
+                                break;
+                            }
+                            if (!cur.consume(',')) {
+                                return {};
+                            }
+                        }
+                    }
+                    if (!item.action.empty() && !item.label.empty()) {
+                        targets.push_back(std::move(item));
+                    }
+                    cur.skipWs();
+                    if (cur.consume(']')) {
+                        break;
+                    }
+                    if (!cur.consume(',')) {
+                        return {};
+                    }
+                }
+            }
+        } else if (!cur.skipValue()) {
+            return {};
+        }
+        cur.skipWs();
+        if (cur.consume('}')) {
+            break;
+        }
+        if (!cur.consume(',')) {
+            return {};
+        }
+    }
+    return targets;
+}
+
 } // namespace fcitx_gemini_voice

@@ -115,6 +115,10 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	if prefetchVal == "" {
 		prefetchVal = "(none)"
 	}
+	translateVal := strings.Join(cfg.PostProcess.TranslateLanguages, ", ")
+	if translateVal == "" {
+		translateVal = "en"
+	}
 	vocabVal := strings.Join(cfg.LiveTranscribe.CustomVocabulary, ", ")
 	if vocabVal == "" {
 		vocabVal = "(none)"
@@ -140,6 +144,7 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	_, _ = fmt.Fprintf(w, "  ime.language:             %s\n", fcitxLang)
 	_, _ = fmt.Fprintf(w, "  ime.recording_prefix:     %s\n", recPrefix)
 	_, _ = fmt.Fprintf(w, "  ime.preedit_max_width:    %s\n", wrapWidth)
+	_, _ = fmt.Fprintf(w, "  ime.translate_languages:  %s\n", strings.Join(fcitxCfg.TranslateLanguages, ", "))
 
 	_, _ = fmt.Fprintf(w, "\nDaemon config (%s):\n", configPath)
 	_, _ = fmt.Fprintf(w, "  connection.proxy:         %s\n", proxyVal)
@@ -152,13 +157,15 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	_, _ = fmt.Fprintf(w, "  live.vad_threshold:       %.0f\n", cfg.LiveTranscribe.VADThreshold)
 	_, _ = fmt.Fprintf(w, "  post_process.model:       %s\n", cfg.PostProcess.Model)
 	_, _ = fmt.Fprintf(w, "  post_process.prefetch:    %s\n", prefetchVal)
+	_, _ = fmt.Fprintf(w, "  post_process.translate_languages: %s\n", translateVal)
 
 	_, _ = fmt.Fprintln(w, "\nPer-action models:")
 	printModelTable(w, cfg)
 
 	_, _ = fmt.Fprintln(w, "\nPrompts:")
 	for _, action := range cfg.EffectiveActionNames() {
-		p := strings.ReplaceAll(cfg.Prompts[action], "\n", " ")
+		promptText, _ := cfg.PromptForAction(action)
+		p := strings.ReplaceAll(promptText, "\n", " ")
 		_, _ = fmt.Fprintf(w, "  %-20s %s\n", action+":", truncatePreview(p, 64))
 	}
 }
@@ -240,6 +247,8 @@ func getConfigKey(cfg Config, fcitxCfg FcitxAddonConfig, key string) (string, er
 		return fcitxCfg.RecordingPrefix, nil
 	case "ime.preedit_max_width":
 		return strconv.Itoa(fcitxCfg.PreeditMaxWidth), nil
+	case "ime.translate_languages":
+		return strings.Join(fcitxCfg.TranslateLanguages, ","), nil
 	case "connection.proxy":
 		return cfg.Connection.Proxy, nil
 	case "connection.credential_name":
@@ -262,6 +271,8 @@ func getConfigKey(cfg Config, fcitxCfg FcitxAddonConfig, key string) (string, er
 		return cfg.PostProcess.Model, nil
 	case "post_process.prefetch":
 		return strings.Join(cfg.PostProcess.Prefetch, ","), nil
+	case "post_process.translate_languages", "translate.languages":
+		return strings.Join(cfg.PostProcess.TranslateLanguages, ","), nil
 	}
 
 	if action, ok := parseActionKey(k, "model.", "post_process.models."); ok {
@@ -271,7 +282,7 @@ func getConfigKey(cfg Config, fcitxCfg FcitxAddonConfig, key string) (string, er
 		return cfg.ModelForAction(action), nil
 	}
 	if action, ok := parseActionKey(k, "prompt.", "prompts."); ok {
-		val, exists := cfg.Prompts[action]
+		val, exists := cfg.PromptForAction(action)
 		if !exists {
 			return "", fmt.Errorf("unknown prompt action %q", action)
 		}
@@ -390,6 +401,11 @@ func isKnownOrConfiguredAction(cfg Config, action string) bool {
 			return true
 		}
 	}
+	for _, target := range cfg.TranslateTargets() {
+		if action == target.Action {
+			return true
+		}
+	}
 	_, ok := cfg.Prompts[action]
 	return ok
 }
@@ -493,6 +509,17 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 		}
 		fcitxCfg.PreeditMaxWidth = w
 		return false, true, nil
+	case "ime.translate_languages":
+		if strings.EqualFold(strings.TrimSpace(val), "default") {
+			fcitxCfg.TranslateLanguages = []string{"en"}
+			return false, true, nil
+		}
+		langs, listErr := parseCommaList(val)
+		if listErr != nil || len(langs) == 0 {
+			return false, false, errors.New("ime.translate_languages requires at least one language (e.g. en)")
+		}
+		fcitxCfg.TranslateLanguages = langs
+		return false, true, nil
 	case "connection.proxy":
 		p, pErr := validateProxyURL(val)
 		if pErr != nil {
@@ -584,6 +611,20 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 			}
 		}
 		cfg.PostProcess.Prefetch = actions
+		return true, false, nil
+	case "post_process.translate_languages", "translate.languages":
+		if strings.EqualFold(strings.TrimSpace(val), "default") {
+			cfg.PostProcess.TranslateLanguages = []string{"en"}
+			return true, false, nil
+		}
+		langs, listErr := parseCommaList(val)
+		if listErr != nil {
+			return false, false, fmt.Errorf("invalid translate_languages list: %w", listErr)
+		}
+		if len(langs) == 0 {
+			return false, false, errors.New("post_process.translate_languages requires at least one language (e.g. en)")
+		}
+		cfg.PostProcess.TranslateLanguages = normalizeTranslateLanguages(langs)
 		return true, false, nil
 	}
 

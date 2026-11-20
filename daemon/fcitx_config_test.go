@@ -21,12 +21,13 @@ func TestFcitxAddonConfig_DefaultsAndRoundTrip(t *testing.T) {
 	}
 
 	want := FcitxAddonConfig{
-		TriggerKeys:     []string{"Alt+space", "Super+v"},
-		ShowActionMenu:  false,
-		SocketPath:      "/tmp/path with spaces/gemini.sock",
-		Language:        "en-US",
-		RecordingPrefix: "🔴",
-		PreeditMaxWidth: 40,
+		TriggerKeys:        []string{"Alt+space", "Super+v"},
+		TranslateLanguages: []string{"en", "ja"},
+		ShowActionMenu:     false,
+		SocketPath:         "/tmp/path with spaces/gemini.sock",
+		Language:           "en-US",
+		RecordingPrefix:    "🔴",
+		PreeditMaxWidth:    40,
 	}
 	if err := SaveFcitxAddonConfig(path, want); err != nil {
 		t.Fatalf("save fcitx config: %v", err)

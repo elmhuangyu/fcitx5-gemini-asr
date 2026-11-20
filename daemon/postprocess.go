@@ -78,7 +78,11 @@ type generateContentResponse struct {
 }
 
 func (p *PostProcessor) Generate(ctx context.Context, cfg Config, apiKey, action, rawText string) (string, error) {
-	prompt, ok := cfg.Prompts[action]
+	return p.GenerateWithLabel(ctx, cfg, apiKey, action, "", rawText)
+}
+
+func (p *PostProcessor) GenerateWithLabel(ctx context.Context, cfg Config, apiKey, action, targetLabel, rawText string) (string, error) {
+	prompt, ok := cfg.PromptForActionWithLabel(action, targetLabel)
 	if !ok || strings.TrimSpace(prompt) == "" {
 		return "", fmt.Errorf("unknown or empty post_process action %q", action)
 	}

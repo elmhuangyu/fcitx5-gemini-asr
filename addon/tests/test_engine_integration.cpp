@@ -547,6 +547,75 @@ int main() {
                 REQUIRE(ic->committed[3] == "Prompt: Write a script...");
             });
 
+            // 5d. Single non-English translate target selects directly
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
+            daemon.waitForCommand(cmdIdx++);
+            runOnMain(instance, [&]() {
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            daemon.sendEvent(
+                R"({"event":"transcribe_done","raw_text":"你好","translate_targets":[{"action":"translate_ja","label":"Japanese"}]})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                auto cl = ic->inputPanel().candidateList();
+                return cl && cl->size() == 4;
+            }));
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key(FcitxKey_3)); });
+            {
+                auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                    daemon.waitForCommand(cmdIdx++));
+                REQUIRE(cmd && (*cmd)["cmd"] == "post_process" &&
+                        (*cmd)["action"] == "translate_ja");
+            }
+            daemon.sendEvent(R"({"event":"final_result","text":"こんにちは"})");
+            REQUIRE(waitOnMain(instance,
+                               [&]() { return ic->committed.size() == 5; }));
+
+            // 5e. Multiple translate targets open Level 2 Translate submenu
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
+            daemon.waitForCommand(cmdIdx++);
+            runOnMain(instance, [&]() {
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            daemon.sendEvent(
+                R"({"event":"transcribe_done","raw_text":"你好世界","translate_targets":[{"action":"translate_en","label":"English"},{"action":"translate_ja","label":"Japanese"},{"action":"translate_fr","label":"French"}]})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                auto cl = ic->inputPanel().candidateList();
+                return cl && cl->size() == 4;
+            }));
+            // Navigate down to [Translate ▸] and press Right -> Level 2 submenu
+            runOnMain(instance, [&]() {
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Down));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Down));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Right));
+                auto cl = ic->inputPanel().candidateList();
+                REQUIRE(cl && cl->size() == 3);
+                REQUIRE(ic->inputPanel().auxUp().toString() == "Translate ▸ ");
+
+                // Left returns to Level 1, '3' also opens Translate submenu
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Left));
+                cl = ic->inputPanel().candidateList();
+                REQUIRE(cl && cl->size() == 4);
+                sendKey(ic.get(), fcitx::Key(FcitxKey_3));
+                cl = ic->inputPanel().candidateList();
+                REQUIRE(cl && cl->size() == 3);
+                sendKey(ic.get(), fcitx::Key(FcitxKey_2));
+            });
+            {
+                auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                    daemon.waitForCommand(cmdIdx++));
+                REQUIRE(cmd && (*cmd)["cmd"] == "post_process" &&
+                        (*cmd)["action"] == "translate_ja");
+            }
+            daemon.sendEvent(
+                R"({"event":"final_result","text":"こんにちは世界"})");
+            REQUIRE(waitOnMain(instance,
+                               [&]() { return ic->committed.size() == 6; }));
+
             // 6. Escape during RECORDING sends cancel and clears UI
             runOnMain(instance,
                       [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
@@ -610,7 +679,7 @@ int main() {
                        ic->inputPanel().overlayMessage().toString() ==
                            "Voice session ended unexpectedly";
             }));
-            runOnMain(instance, [&]() { REQUIRE(ic->committed.size() == 4); });
+            runOnMain(instance, [&]() { REQUIRE(ic->committed.size() == 6); });
 
             // A subsequent session works normally.
             runOnMain(instance,
@@ -691,9 +760,9 @@ int main() {
             daemon.sendEvent(
                 R"({"event":"transcribe_done","raw_text":"直接上屏"})");
             REQUIRE(waitOnMain(instance,
-                               [&]() { return ic->committed.size() == 5; }));
+                               [&]() { return ic->committed.size() == 7; }));
             runOnMain(instance,
-                      [&]() { REQUIRE(ic->committed[4] == "直接上屏"); });
+                      [&]() { REQUIRE(ic->committed[6] == "直接上屏"); });
 
             // 7b. Multiline (>3 lines) raw_text in ACTION_MENU & SUBMENU_REFINE
             // places continuation lines in candidate[0] without shifting
@@ -743,8 +812,8 @@ int main() {
                 // Back to Action menu and press '1' to commit raw_text.
                 sendKey(ic.get(), fcitx::Key(FcitxKey_Left));
                 sendKey(ic.get(), fcitx::Key(FcitxKey_1));
-                REQUIRE(ic->committed.size() == 6);
-                REQUIRE(ic->committed[5] ==
+                REQUIRE(ic->committed.size() == 8);
+                REQUIRE(ic->committed[7] ==
                         "一二三四五六七八九十十一十二十三十四十五");
             });
 

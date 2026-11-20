@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -189,5 +190,42 @@ custom_vocabulary = [" Fcitx5 ", "", "PipeWire", "Fcitx5"]
 	}
 	if _, err := LoadConfigFile(badPath); err == nil {
 		t.Fatal("expected error for invalid live_transcribe.mode")
+	}
+}
+
+func TestTranslateTargetsAndPromptResolution(t *testing.T) {
+	cfg := DefaultConfig()
+	if got := cfg.TranslateTargets(); len(got) != 1 || got[0] != (TranslateTarget{Action: "translate_en", Label: "English"}) {
+		t.Fatalf("default TranslateTargets = %#v", got)
+	}
+
+	cfg.PostProcess.TranslateLanguages = []string{"en", "Japanese", "zh-CN", "ja", "粤语"}
+	targets := cfg.TranslateTargets()
+	want := []TranslateTarget{
+		{Action: "translate_en", Label: "English"},
+		{Action: "translate_ja", Label: "Japanese"},
+		{Action: "translate_zh_cn", Label: "Chinese (Simplified)"},
+		{Action: "translate_u_828f92e6", Label: "粤语"},
+	}
+	// Check length and known actions (exact hash checked via PromptForAction).
+	if len(targets) != len(want) {
+		t.Fatalf("TranslateTargets len = %d, want %d: %#v", len(targets), len(want), targets)
+	}
+	for i := 0; i < 3; i++ {
+		if targets[i] != want[i] {
+			t.Fatalf("targets[%d] = %#v, want %#v", i, targets[i], want[i])
+		}
+	}
+	if targets[3].Label != "粤语" || !strings.HasPrefix(targets[3].Action, "translate_") {
+		t.Fatalf("unexpected custom target: %#v", targets[3])
+	}
+
+	promptJa, ok := cfg.PromptForAction("translate_ja")
+	if !ok || !strings.Contains(promptJa, "Japanese") {
+		t.Fatalf("PromptForAction(translate_ja) = %q, %v", promptJa, ok)
+	}
+	promptCustom, ok := cfg.PromptForAction(targets[3].Action)
+	if !ok || !strings.Contains(promptCustom, "粤语") {
+		t.Fatalf("PromptForAction(custom) = %q, %v", promptCustom, ok)
 	}
 }

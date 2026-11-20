@@ -35,6 +35,9 @@ msgstr ""
 msgid "Preedit Line Wrap Width"
 msgstr ""
 
+msgid "Translation Target Languages"
+msgstr ""
+
 #: addon/engine.cpp:241 addon/engine.cpp:553
 msgid "Gemini Voice Daemon not connected"
 msgstr ""
@@ -61,6 +64,15 @@ msgstr ""
 
 #: addon/engine.cpp:470
 msgid "[Translate] Translate to English"
+msgstr ""
+
+msgid "[Translate] Translate to "
+msgstr ""
+
+msgid "[Translate ▸] Translate to ..."
+msgstr ""
+
+msgid "Translate ▸"
 msgstr ""
 
 #: addon/engine.cpp:478

@@ -301,7 +301,8 @@ void GeminiVoiceEngine::onKeyEvent(fcitx::KeyEvent &keyEvent) {
         handleActionMenuKey(ic, keyEvent);
         break;
     case State::SUBMENU_REFINE:
-        handleSubmenuRefineKey(ic, keyEvent);
+    case State::SUBMENU_TRANSLATE:
+        handleSubmenuKey(ic, keyEvent);
         break;
     case State::PROCESSING:
         handleProcessingKey(ic, keyEvent);
@@ -333,6 +334,7 @@ void GeminiVoiceEngine::handleIdleKey(fcitx::InputContext *ic,
     activeIC_ = ic->watch();
     partialText_.clear();
     rawText_.clear();
+    translateTargets_.clear();
     state_ = State::RECORDING;
     setPanelDisplay(ic, *config_.recordingPrefix, "");
 }
@@ -383,7 +385,16 @@ void GeminiVoiceEngine::handleActionMenuKey(fcitx::InputContext *ic,
     }
 
     if (key.check(FcitxKey_Right)) {
-        showRefineSubmenu(ic);
+        const bool hasHeader = candList->size() > 0 &&
+                               candList->candidate(0).hasCustomLabel() &&
+                               candList->candidate(0).customLabel().empty();
+        const int translateIdx = (hasHeader ? 1 : 0) + 2;
+        if (candList->cursorIndex() == translateIdx &&
+            effectiveTranslateTargets().size() > 1) {
+            showTranslateSubmenu(ic);
+        } else {
+            showRefineSubmenu(ic);
+        }
         return;
     }
 
@@ -392,8 +403,8 @@ void GeminiVoiceEngine::handleActionMenuKey(fcitx::InputContext *ic,
     }
 }
 
-void GeminiVoiceEngine::handleSubmenuRefineKey(fcitx::InputContext *ic,
-                                               fcitx::KeyEvent &keyEvent) {
+void GeminiVoiceEngine::handleSubmenuKey(fcitx::InputContext *ic,
+                                         fcitx::KeyEvent &keyEvent) {
     keyEvent.filterAndAccept();
     auto candList = ic->inputPanel().candidateList();
     if (!candList) {
@@ -472,6 +483,138 @@ void GeminiVoiceEngine::handleProcessingKey(fcitx::InputContext *ic,
 }
 
 namespace {
+
+std::string trimAsciiWs(std::string_view s) {
+    size_t start = 0;
+    while (start < s.size() && (s[start] == ' ' || s[start] == '\t' ||
+                                s[start] == '\r' || s[start] == '\n')) {
+        ++start;
+    }
+    size_t end = s.size();
+    while (end > start && (s[end - 1] == ' ' || s[end - 1] == '\t' ||
+                           s[end - 1] == '\r' || s[end - 1] == '\n')) {
+        --end;
+    }
+    return std::string(s.substr(start, end - start));
+}
+
+std::string normalizeAliasKey(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char ch : s) {
+        if (ch == '_' || ch == ' ') {
+            out.push_back('-');
+        } else if (ch >= 'A' && ch <= 'Z') {
+            out.push_back(static_cast<char>(ch - 'A' + 'a'));
+        } else {
+            out.push_back(ch);
+        }
+    }
+    return out;
+}
+
+std::string slugifyTarget(std::string_view s) {
+    std::string out;
+    bool prevUnderscore = false;
+    for (unsigned char uc : s) {
+        char ch = static_cast<char>(uc);
+        if (ch >= 'A' && ch <= 'Z') {
+            ch = static_cast<char>(ch - 'A' + 'a');
+        }
+        if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+            out.push_back(ch);
+            prevUnderscore = false;
+        } else if (!prevUnderscore && !out.empty()) {
+            out.push_back('_');
+            prevUnderscore = true;
+        }
+    }
+    while (!out.empty() && out.back() == '_') {
+        out.pop_back();
+    }
+    if (out.empty()) {
+        uint32_t h = 2166136261u;
+        for (unsigned char uc : s) {
+            h ^= uc;
+            h *= 16777619u;
+        }
+        char buf[16];
+        std::snprintf(buf, sizeof(buf), "u_%08x", h);
+        return std::string(buf);
+    }
+    return out;
+}
+
+std::optional<TranslateTarget> resolveTranslateTarget(std::string_view raw) {
+    std::string trimmed = trimAsciiWs(raw);
+    if (trimmed.empty()) {
+        return std::nullopt;
+    }
+    static const std::unordered_map<std::string, TranslateTarget> known = {
+        {"en", {"translate_en", "English"}},
+        {"english", {"translate_en", "English"}},
+        {"zh", {"translate_zh_cn", "Chinese (Simplified)"}},
+        {"zh-cn", {"translate_zh_cn", "Chinese (Simplified)"}},
+        {"zh-hans", {"translate_zh_cn", "Chinese (Simplified)"}},
+        {"chinese", {"translate_zh_cn", "Chinese (Simplified)"}},
+        {"simplified-chinese", {"translate_zh_cn", "Chinese (Simplified)"}},
+        {"zh-tw", {"translate_zh_tw", "Chinese (Traditional)"}},
+        {"zh-hant", {"translate_zh_tw", "Chinese (Traditional)"}},
+        {"traditional-chinese", {"translate_zh_tw", "Chinese (Traditional)"}},
+        {"ja", {"translate_ja", "Japanese"}},
+        {"jp", {"translate_ja", "Japanese"}},
+        {"japanese", {"translate_ja", "Japanese"}},
+        {"ko", {"translate_ko", "Korean"}},
+        {"korean", {"translate_ko", "Korean"}},
+        {"fr", {"translate_fr", "French"}},
+        {"french", {"translate_fr", "French"}},
+        {"de", {"translate_de", "German"}},
+        {"german", {"translate_de", "German"}},
+        {"es", {"translate_es", "Spanish"}},
+        {"spanish", {"translate_es", "Spanish"}},
+        {"pt", {"translate_pt", "Portuguese"}},
+        {"portuguese", {"translate_pt", "Portuguese"}},
+        {"ru", {"translate_ru", "Russian"}},
+        {"russian", {"translate_ru", "Russian"}},
+        {"it", {"translate_it", "Italian"}},
+        {"italian", {"translate_it", "Italian"}},
+        {"ar", {"translate_ar", "Arabic"}},
+        {"arabic", {"translate_ar", "Arabic"}},
+        {"vi", {"translate_vi", "Vietnamese"}},
+        {"vietnamese", {"translate_vi", "Vietnamese"}},
+        {"th", {"translate_th", "Thai"}},
+        {"thai", {"translate_th", "Thai"}},
+        {"id", {"translate_id", "Indonesian"}},
+        {"indonesian", {"translate_id", "Indonesian"}},
+    };
+    auto it = known.find(normalizeAliasKey(trimmed));
+    if (it != known.end()) {
+        return it->second;
+    }
+    return TranslateTarget{"translate_" + slugifyTarget(trimmed), trimmed};
+}
+
+std::vector<TranslateTarget>
+resolveConfiguredTargets(const std::vector<std::string> &langs) {
+    std::vector<TranslateTarget> out;
+    for (const auto &raw : langs) {
+        auto resolved = resolveTranslateTarget(raw);
+        if (!resolved.has_value()) {
+            continue;
+        }
+        bool dup = false;
+        for (const auto &existing : out) {
+            if (existing.action == resolved->action) {
+                dup = true;
+                break;
+            }
+        }
+        if (!dup) {
+            out.push_back(std::move(*resolved));
+        }
+    }
+    return out;
+}
 
 fcitx::Text buildMultilineDisplayText(const std::string &wrappedPreedit) {
     fcitx::Text out;
@@ -589,6 +732,7 @@ void GeminiVoiceEngine::clearSession(fcitx::InputContext *ic) {
     state_ = State::IDLE;
     partialText_.clear();
     rawText_.clear();
+    translateTargets_.clear();
     activeIC_.unwatch();
 
     if (ic) {
@@ -603,6 +747,24 @@ void GeminiVoiceEngine::cancelActiveSession(fcitx::InputContext *ic) {
         socketClient_->sendLine(buildCommandJson("cancel"));
     }
     clearSession(ic);
+}
+
+std::vector<TranslateTarget>
+GeminiVoiceEngine::effectiveTranslateTargets() const {
+    auto configured = resolveConfiguredTargets(*config_.translateLanguages);
+    const bool hasCustomFcitxConfig =
+        configured.size() > 1 ||
+        (configured.size() == 1 && configured[0].action != "translate_en");
+    if (hasCustomFcitxConfig) {
+        return configured;
+    }
+    if (!translateTargets_.empty()) {
+        return translateTargets_;
+    }
+    if (!configured.empty()) {
+        return configured;
+    }
+    return {{"translate_en", "English"}};
 }
 
 void GeminiVoiceEngine::showActionMenu(fcitx::InputContext *ic) {
@@ -639,14 +801,32 @@ void GeminiVoiceEngine::showActionMenu(fcitx::InputContext *ic) {
             }
             showRefineSubmenu(targetIc);
         });
-    list->append<ActionCandidateWord>(
-        fcitx::Text(_("[Translate] Translate to English")),
-        [this, alive = alive_](fcitx::InputContext *targetIc) {
-            if (!alive->load()) {
-                return;
-            }
-            triggerPostProcess(targetIc, "translate_en");
-        });
+    const auto targets = effectiveTranslateTargets();
+    if (targets.size() == 1) {
+        const auto &target = targets[0];
+        const std::string translateLabel =
+            (target.action == "translate_en")
+                ? std::string(_("[Translate] Translate to English"))
+                : (std::string(_("[Translate] Translate to ")) + target.label);
+        list->append<ActionCandidateWord>(
+            fcitx::Text(translateLabel),
+            [this, alive = alive_, action = target.action,
+             label = target.label](fcitx::InputContext *targetIc) {
+                if (!alive->load()) {
+                    return;
+                }
+                triggerPostProcess(targetIc, action, label);
+            });
+    } else {
+        list->append<ActionCandidateWord>(
+            fcitx::Text(_("[Translate ▸] Translate to ...")),
+            [this, alive = alive_](fcitx::InputContext *targetIc) {
+                if (!alive->load()) {
+                    return;
+                }
+                showTranslateSubmenu(targetIc);
+            });
+    }
     list->append<ActionCandidateWord>(
         fcitx::Text(_("[Ask AI] Use speech as prompt to generate response")),
         [this, alive = alive_](fcitx::InputContext *targetIc) {
@@ -709,14 +889,46 @@ void GeminiVoiceEngine::showRefineSubmenu(fcitx::InputContext *ic) {
     applyMenuPanel(ic, _("Refine ▸"), rawText_, std::move(list));
 }
 
-void GeminiVoiceEngine::triggerPostProcess(fcitx::InputContext *ic,
-                                           const std::string &action) {
+void GeminiVoiceEngine::showTranslateSubmenu(fcitx::InputContext *ic) {
     if (!ic) {
         clearSession(nullptr);
         return;
     }
 
-    std::string cmd = buildCommandJson("post_process", {{"action", action}});
+    state_ = State::SUBMENU_TRANSLATE;
+    auto list = std::make_unique<fcitx::CommonCandidateList>();
+    list->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
+    list->setPageSize(9);
+    list->setSelectionKey(defaultSelectionKeys());
+
+    for (const auto &target : effectiveTranslateTargets()) {
+        list->append<ActionCandidateWord>(
+            fcitx::Text(target.label),
+            [this, alive = alive_, action = target.action,
+             label = target.label](fcitx::InputContext *targetIc) {
+                if (!alive->load()) {
+                    return;
+                }
+                triggerPostProcess(targetIc, action, label);
+            });
+    }
+
+    applyMenuPanel(ic, _("Translate ▸"), rawText_, std::move(list));
+}
+
+void GeminiVoiceEngine::triggerPostProcess(fcitx::InputContext *ic,
+                                           const std::string &action,
+                                           const std::string &targetLabel) {
+    if (!ic) {
+        clearSession(nullptr);
+        return;
+    }
+
+    std::string cmd =
+        targetLabel.empty()
+            ? buildCommandJson("post_process", {{"action", action}})
+            : buildCommandJson("post_process", {{"action", action},
+                                                {"target_label", targetLabel}});
     if (!socketClient_->sendLine(cmd)) {
         instance_->showCustomInputMethodInformation(
             ic, _("Gemini Voice Daemon not connected"));
@@ -782,6 +994,7 @@ void GeminiVoiceEngine::onDaemonMessage(const std::string &line) {
             return;
         }
         rawText_ = std::move(raw);
+        translateTargets_ = parseTranslateTargets(line);
         showActionMenu(ic);
         return;
     }

@@ -30,6 +30,7 @@ type setupFormState struct {
 	actionOrder        []string
 	actionOverrides    []string
 	prefetch           []string
+	translateLanguages string
 	customVocabulary   string
 	triggerKeys        string
 	proxy              string
@@ -69,6 +70,11 @@ func newSetupFormState(cfg Config, fcitxCfg FcitxAddonConfig, opts setupFormOpti
 		ppModel = DefaultPostProcessModel
 	}
 
+	translateLangs := strings.Join(cfg.PostProcess.TranslateLanguages, ", ")
+	if strings.TrimSpace(translateLangs) == "" {
+		translateLangs = "en"
+	}
+
 	return &setupFormState{
 		showActionMenu:     fcitxCfg.ShowActionMenu,
 		language:           lang,
@@ -80,6 +86,7 @@ func newSetupFormState(cfg Config, fcitxCfg FcitxAddonConfig, opts setupFormOpti
 		actionOrder:        actionOrder,
 		actionOverrides:    overrides,
 		prefetch:           append([]string(nil), cfg.PostProcess.Prefetch...),
+		translateLanguages: translateLangs,
 		customVocabulary:   strings.Join(cfg.LiveTranscribe.CustomVocabulary, ", "),
 		triggerKeys:        strings.Join(fcitxCfg.TriggerKeys, ", "),
 		proxy:              cfg.Connection.Proxy,
@@ -248,6 +255,19 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 					_, err := validateProxyURL(s)
 					return err
 				}),
+
+			huh.NewInput().
+				Title("Translation target languages").
+				Description("Comma-separated target languages (e.g. en, ja, zh-CN). Multiple languages open a submenu.").
+				Placeholder("e.g. en, ja").
+				Value(&state.translateLanguages).
+				Validate(func(s string) error {
+					langs, err := parseCommaList(s)
+					if err != nil || len(langs) == 0 {
+						return errors.New("post_process.translate_languages requires at least one language (e.g. en)")
+					}
+					return nil
+				}),
 		).Title("5. Vocabulary, Hotkey & Network"),
 	)
 
@@ -341,6 +361,12 @@ func applySetupFormState(cfg *Config, fcitxCfg *FcitxAddonConfig, state *setupFo
 		return err
 	}
 	if _, _, err := setConfigKey(cfg, fcitxCfg, "connection.proxy", state.proxy); err != nil {
+		return err
+	}
+	if _, _, err := setConfigKey(cfg, fcitxCfg, "post_process.translate_languages", state.translateLanguages); err != nil {
+		return err
+	}
+	if _, _, err := setConfigKey(cfg, fcitxCfg, "ime.translate_languages", state.translateLanguages); err != nil {
 		return err
 	}
 	return nil

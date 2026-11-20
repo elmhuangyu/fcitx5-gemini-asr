@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"log"
 	"net"
 	"net/http"
@@ -65,10 +66,16 @@ type LiveTranscribeConfig struct {
 	VADThreshold     float64  `toml:"vad_threshold,omitempty"`
 }
 
+type TranslateTarget struct {
+	Action string `json:"action"`
+	Label  string `json:"label"`
+}
+
 type PostProcessConfig struct {
-	Model    string            `toml:"model"`
-	Models   map[string]string `toml:"models,omitempty"`
-	Prefetch []string          `toml:"prefetch"`
+	Model              string            `toml:"model"`
+	Models             map[string]string `toml:"models,omitempty"`
+	Prefetch           []string          `toml:"prefetch"`
+	TranslateLanguages []string          `toml:"translate_languages,omitempty"`
 }
 
 func DefaultConfig() Config {
@@ -86,8 +93,9 @@ func DefaultConfig() Config {
 			VADThreshold: DefaultVADThreshold,
 		},
 		PostProcess: PostProcessConfig{
-			Model:    DefaultPostProcessModel,
-			Prefetch: []string{"refine_fix_typos", "refine_formal"},
+			Model:              DefaultPostProcessModel,
+			Prefetch:           []string{"refine_fix_typos", "refine_formal"},
+			TranslateLanguages: []string{"en"},
 		},
 		Prompts: map[string]string{
 			"refine_fix_typos": "仅修正以下语音转录文本中的错别字、同音字错误和标点符号。严禁增删词汇或改变原本的口语语气，直接输出结果：",
@@ -117,6 +125,7 @@ vad_silence_ms = 1200
 [post_process]
 model = "gemini-3.5-flash-lite"
 prefetch = ["refine_fix_typos", "refine_formal"]
+translate_languages = ["en"]
 
 [post_process.models]
 # Optional per-action model overrides (empty inherits post_process.model):
@@ -180,6 +189,9 @@ func (c Config) Clone() Config {
 	if c.PostProcess.Prefetch != nil {
 		out.PostProcess.Prefetch = append([]string(nil), c.PostProcess.Prefetch...)
 	}
+	if c.PostProcess.TranslateLanguages != nil {
+		out.PostProcess.TranslateLanguages = append([]string(nil), c.PostProcess.TranslateLanguages...)
+	}
 	if c.PostProcess.Models != nil {
 		out.PostProcess.Models = make(map[string]string, len(c.PostProcess.Models))
 		for k, v := range c.PostProcess.Models {
@@ -206,11 +218,181 @@ func (c Config) ModelForAction(action string) string {
 	return DefaultPostProcessModel
 }
 
-// EffectiveActionNames returns KnownActions followed by any extra sorted prompt keys.
+var knownTranslateLanguages = map[string]TranslateTarget{
+	"en":                  {Action: "translate_en", Label: "English"},
+	"english":             {Action: "translate_en", Label: "English"},
+	"zh":                  {Action: "translate_zh_cn", Label: "Chinese (Simplified)"},
+	"zh-cn":               {Action: "translate_zh_cn", Label: "Chinese (Simplified)"},
+	"zh-hans":             {Action: "translate_zh_cn", Label: "Chinese (Simplified)"},
+	"chinese":             {Action: "translate_zh_cn", Label: "Chinese (Simplified)"},
+	"simplified-chinese":  {Action: "translate_zh_cn", Label: "Chinese (Simplified)"},
+	"zh-tw":               {Action: "translate_zh_tw", Label: "Chinese (Traditional)"},
+	"zh-hant":             {Action: "translate_zh_tw", Label: "Chinese (Traditional)"},
+	"traditional-chinese": {Action: "translate_zh_tw", Label: "Chinese (Traditional)"},
+	"ja":                  {Action: "translate_ja", Label: "Japanese"},
+	"jp":                  {Action: "translate_ja", Label: "Japanese"},
+	"japanese":            {Action: "translate_ja", Label: "Japanese"},
+	"ko":                  {Action: "translate_ko", Label: "Korean"},
+	"korean":              {Action: "translate_ko", Label: "Korean"},
+	"fr":                  {Action: "translate_fr", Label: "French"},
+	"french":              {Action: "translate_fr", Label: "French"},
+	"de":                  {Action: "translate_de", Label: "German"},
+	"german":              {Action: "translate_de", Label: "German"},
+	"es":                  {Action: "translate_es", Label: "Spanish"},
+	"spanish":             {Action: "translate_es", Label: "Spanish"},
+	"pt":                  {Action: "translate_pt", Label: "Portuguese"},
+	"portuguese":          {Action: "translate_pt", Label: "Portuguese"},
+	"ru":                  {Action: "translate_ru", Label: "Russian"},
+	"russian":             {Action: "translate_ru", Label: "Russian"},
+	"it":                  {Action: "translate_it", Label: "Italian"},
+	"italian":             {Action: "translate_it", Label: "Italian"},
+	"ar":                  {Action: "translate_ar", Label: "Arabic"},
+	"arabic":              {Action: "translate_ar", Label: "Arabic"},
+	"vi":                  {Action: "translate_vi", Label: "Vietnamese"},
+	"vietnamese":          {Action: "translate_vi", Label: "Vietnamese"},
+	"th":                  {Action: "translate_th", Label: "Thai"},
+	"thai":                {Action: "translate_th", Label: "Thai"},
+	"id":                  {Action: "translate_id", Label: "Indonesian"},
+	"indonesian":          {Action: "translate_id", Label: "Indonesian"},
+}
+
+func slugifyTranslateTarget(s string) string {
+	var b strings.Builder
+	prevUnderscore := false
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+			prevUnderscore = false
+		case !prevUnderscore && b.Len() > 0:
+			b.WriteByte('_')
+			prevUnderscore = true
+		}
+	}
+	slug := strings.Trim(b.String(), "_")
+	if slug == "" {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(s))
+		return fmt.Sprintf("u_%08x", h.Sum32())
+	}
+	return slug
+}
+
+// ResolveTranslateTarget normalizes a configured target language entry into its action key and display label.
+func ResolveTranslateTarget(raw string) (TranslateTarget, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return TranslateTarget{}, false
+	}
+	alias := strings.ToLower(trimmed)
+	alias = strings.ReplaceAll(alias, "_", "-")
+	alias = strings.ReplaceAll(alias, " ", "-")
+	if known, ok := knownTranslateLanguages[alias]; ok {
+		return known, true
+	}
+	return TranslateTarget{
+		Action: "translate_" + slugifyTranslateTarget(trimmed),
+		Label:  trimmed,
+	}, true
+}
+
+func normalizeTranslateLanguages(langs []string) []string {
+	if len(langs) == 0 {
+		return []string{"en"}
+	}
+	out := make([]string, 0, len(langs))
+	seen := make(map[string]struct{}, len(langs))
+	for _, raw := range langs {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		target, ok := ResolveTranslateTarget(trimmed)
+		if !ok {
+			continue
+		}
+		if _, dup := seen[target.Action]; dup {
+			continue
+		}
+		seen[target.Action] = struct{}{}
+		out = append(out, trimmed)
+	}
+	if len(out) == 0 {
+		return []string{"en"}
+	}
+	return out
+}
+
+// TranslateTargets returns the deduplicated list of configured translation targets, defaulting to English.
+func (c Config) TranslateTargets() []TranslateTarget {
+	out := make([]TranslateTarget, 0, len(c.PostProcess.TranslateLanguages))
+	seen := make(map[string]struct{}, len(c.PostProcess.TranslateLanguages))
+	for _, raw := range c.PostProcess.TranslateLanguages {
+		target, ok := ResolveTranslateTarget(raw)
+		if !ok {
+			continue
+		}
+		if _, dup := seen[target.Action]; dup {
+			continue
+		}
+		seen[target.Action] = struct{}{}
+		out = append(out, target)
+	}
+	if len(out) == 0 {
+		return []TranslateTarget{{Action: "translate_en", Label: "English"}}
+	}
+	return out
+}
+
+// PromptForAction returns the prompt for action, synthesizing a default translation prompt for configured target languages.
+func (c Config) PromptForAction(action string) (string, bool) {
+	return c.PromptForActionWithLabel(action, "")
+}
+
+// PromptForActionWithLabel returns the prompt for action, falling back to a
+// synthesized translation prompt using targetLabel or known language aliases
+// when action is a translate_* key.
+func (c Config) PromptForActionWithLabel(action, targetLabel string) (string, bool) {
+	if p, ok := c.Prompts[action]; ok && strings.TrimSpace(p) != "" {
+		return p, true
+	}
+	for _, target := range c.TranslateTargets() {
+		if target.Action == action {
+			return fmt.Sprintf("Translate the following text into natural, idiomatic %s. Output ONLY the translation:", target.Label), true
+		}
+	}
+	if strings.HasPrefix(action, "translate_") {
+		label := strings.TrimSpace(targetLabel)
+		if label == "" {
+			for _, known := range knownTranslateLanguages {
+				if known.Action == action {
+					label = known.Label
+					break
+				}
+			}
+		}
+		if label != "" {
+			return fmt.Sprintf("Translate the following text into natural, idiomatic %s. Output ONLY the translation:", label), true
+		}
+	}
+	return "", false
+}
+
+// EffectiveActionNames returns KnownActions (with translate_en expanded to configured TranslateTargets) followed by any extra sorted prompt keys.
 func (c Config) EffectiveActionNames() []string {
-	out := make([]string, 0, len(KnownActions)+len(c.Prompts))
-	seen := make(map[string]struct{}, len(KnownActions)+len(c.Prompts))
+	targets := c.TranslateTargets()
+	out := make([]string, 0, len(KnownActions)+len(targets)+len(c.Prompts))
+	seen := make(map[string]struct{}, len(KnownActions)+len(targets)+len(c.Prompts))
 	for _, a := range KnownActions {
+		if a == "translate_en" {
+			for _, t := range targets {
+				if _, dup := seen[t.Action]; !dup {
+					out = append(out, t.Action)
+					seen[t.Action] = struct{}{}
+				}
+			}
+			continue
+		}
 		out = append(out, a)
 		seen[a] = struct{}{}
 	}
@@ -231,6 +413,7 @@ func renderConfigTOML(cfg Config) ([]byte, error) {
 	if toWrite.PostProcess.Prefetch == nil {
 		toWrite.PostProcess.Prefetch = []string{}
 	}
+	toWrite.PostProcess.TranslateLanguages = normalizeTranslateLanguages(toWrite.PostProcess.TranslateLanguages)
 	if len(toWrite.PostProcess.Models) > 0 {
 		pruned := make(map[string]string, len(toWrite.PostProcess.Models))
 		for k, v := range toWrite.PostProcess.Models {
@@ -302,6 +485,7 @@ func LoadConfigFile(path string) (Config, error) {
 	if strings.TrimSpace(cfg.PostProcess.Model) == "" {
 		cfg.PostProcess.Model = DefaultPostProcessModel
 	}
+	cfg.PostProcess.TranslateLanguages = normalizeTranslateLanguages(cfg.PostProcess.TranslateLanguages)
 	return cfg, nil
 }
 
