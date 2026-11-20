@@ -1,8 +1,14 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the fcitx5-gemini-voice package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
 msgid ""
 msgstr ""
 "Project-Id-Version: fcitx5-gemini-voice 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-18 00:00+0000\n"
+"POT-Creation-Date: 2026-11-19 22:04-0500\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -11,114 +17,114 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: addon/engine.h:30
+#: addon/engine.h:37
 msgid "Trigger Key"
 msgstr ""
 
-#: addon/engine.h:35
+#: addon/engine.h:42
 msgid "Show LLM Action Menu"
 msgstr ""
 
-#: addon/engine.h:37
+#: addon/engine.h:44
 msgid "Daemon Unix Socket Path"
 msgstr ""
 
-#: addon/engine.h:40
+#: addon/engine.h:47
 msgid "Transcription Language"
 msgstr ""
 
-#: addon/engine.h:43
+#: addon/engine.h:49
 msgid "Recording Prefix"
 msgstr ""
 
-#: addon/engine.h:46
+#: addon/engine.h:51
 msgid "Preedit Line Wrap Width"
 msgstr ""
 
+#: addon/engine.h:56
 msgid "Translation Target Languages"
 msgstr ""
 
-#: addon/engine.cpp:241 addon/engine.cpp:553
+#: addon/engine.cpp:335 addon/engine.cpp:964
 msgid "Gemini Voice Daemon not connected"
 msgstr ""
 
-#: addon/engine.cpp:249 addon/engine.cpp:591
-msgid "[Recording...]"
-msgstr ""
-
-#: addon/engine.cpp:261
+#: addon/engine.cpp:361
 msgid "Gemini Voice Daemon disconnected"
 msgstr ""
 
-#: addon/engine.cpp:267
+#: addon/engine.cpp:366
 msgid "[Finalizing transcript...]"
 msgstr ""
 
-#: addon/engine.cpp:450
+#: addon/engine.cpp:814
 msgid "[Raw]"
 msgstr ""
 
-#: addon/engine.cpp:462
+#: addon/engine.cpp:827
 msgid "[Refine ▸] Polish (Fix typos / Casual / Formal / As Prompt)"
 msgstr ""
 
-#: addon/engine.cpp:470
+#: addon/engine.cpp:839
 msgid "[Translate] Translate to English"
 msgstr ""
 
+#: addon/engine.cpp:840
 msgid "[Translate] Translate to "
 msgstr ""
 
+#: addon/engine.cpp:852
 msgid "[Translate ▸] Translate to ..."
 msgstr ""
 
-msgid "Translate ▸"
-msgstr ""
-
-#: addon/engine.cpp:478
+#: addon/engine.cpp:861
 msgid "[Ask AI] Use speech as prompt to generate response"
 msgstr ""
 
-#: addon/engine.cpp:509
+#: addon/engine.cpp:886
 msgid "[Fix Typos] Fix typos and punctuation only, keeping spoken tone"
 msgstr ""
 
-#: addon/engine.cpp:517
+#: addon/engine.cpp:894
 msgid "[Casual] Natural and relaxed tone for chat"
 msgstr ""
 
-#: addon/engine.cpp:526
+#: addon/engine.cpp:903
 msgid "[Formal] Clear and professional tone for email and docs"
 msgstr ""
 
-#: addon/engine.cpp:534
+#: addon/engine.cpp:911
 msgid "[As Prompt] Convert to structured prompt"
 msgstr ""
 
-#: addon/engine.cpp:537
+#: addon/engine.cpp:919
 msgid "Refine ▸"
 msgstr ""
 
-#: addon/engine.cpp:562
+#: addon/engine.cpp:946
+msgid "Translate ▸"
+msgstr ""
+
+#: addon/engine.cpp:972
 msgid "[AI Processing...]"
 msgstr ""
 
-#: addon/engine.cpp:609
+#: addon/engine.cpp:1018
 msgid "No speech detected"
 msgstr ""
 
-#: addon/engine.cpp:638
+#: addon/engine.cpp:1048
 msgid "Unknown error"
 msgstr ""
 
-#: addon/engine.cpp:641
+#: addon/engine.cpp:1051
 msgid "AI processing failed: "
 msgstr ""
 
-#: addon/engine.cpp:688 addon/engine.cpp:694
-msgid "Disconnected from Gemini Voice Daemon"
+#: addon/engine.cpp:1086
+msgid "Voice session ended unexpectedly"
 msgstr ""
 
-#: addon/engine.cpp:676
-msgid "Voice session ended unexpectedly"
+#: addon/engine.cpp:1098 addon/engine.cpp:1104
+msgid "Disconnected from Gemini Voice Daemon"
 msgstr ""
