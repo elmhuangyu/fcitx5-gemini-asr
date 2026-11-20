@@ -598,3 +598,45 @@ func TestSocketServer_StalledClientWriteDeadline(t *testing.T) {
 		}
 	})
 }
+
+func TestServerEvent_TranslateTargetsJSON(t *testing.T) {
+	ev := ServerEvent{
+		Event:   "raw_transcript",
+		RawText: "hello",
+		TranslateTargets: []TranslateTarget{
+			{Action: "translate_ja", Label: "Japanese"},
+			{Action: "translate_en", Label: "English"},
+		},
+	}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal ServerEvent: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatalf("unmarshal ServerEvent to map: %v", err)
+	}
+	rawTargets, ok := decoded["translate_targets"].([]any)
+	if !ok || len(rawTargets) != 2 {
+		t.Fatalf("expected translate_targets array of len 2 in %s", string(b))
+	}
+	first, ok := rawTargets[0].(map[string]any)
+	if !ok || first["action"] != "translate_ja" || first["label"] != "Japanese" {
+		t.Fatalf("unexpected first translate_targets entry: %#v", rawTargets[0])
+	}
+
+	// Empty TranslateTargets should be omitted.
+	emptyEv := ServerEvent{Event: "state_changed", State: "idle"}
+	emptyBytes, err := json.Marshal(emptyEv)
+	if err != nil {
+		t.Fatalf("marshal empty ServerEvent: %v", err)
+	}
+	var emptyDecoded map[string]any
+	if err := json.Unmarshal(emptyBytes, &emptyDecoded); err != nil {
+		t.Fatalf("unmarshal empty ServerEvent: %v", err)
+	}
+	if _, exists := emptyDecoded["translate_targets"]; exists {
+		t.Fatalf("expected translate_targets omitted when empty, got %s", string(emptyBytes))
+	}
+}
