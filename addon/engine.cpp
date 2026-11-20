@@ -475,15 +475,37 @@ void GeminiVoiceEngine::setPanelDisplay(fcitx::InputContext *ic,
     const std::string wrappedPreedit =
         wrapPreeditText(preeditText, *config_.preeditMaxWidth);
 
-    fcitx::Text formattedPreedit;
+    std::string firstLine;
+    std::string restLines;
     if (!wrappedPreedit.empty()) {
-        formattedPreedit.append(wrappedPreedit,
-                                fcitx::TextFormatFlag::Underline);
-        formattedPreedit.setCursor(static_cast<int>(wrappedPreedit.size()));
+        const size_t nl = wrappedPreedit.find('\n');
+        if (nl == std::string::npos) {
+            firstLine = wrappedPreedit;
+        } else {
+            firstLine = wrappedPreedit.substr(0, nl);
+            restLines = wrappedPreedit.substr(nl + 1);
+        }
+    }
+
+    // Fcitx5 classicui forces upperLayout_ (auxUp + preedit) into Pango
+    // single-paragraph mode, which renders '\n' as a visible return glyph
+    // instead of breaking lines. Keep only the first line in preedit and place
+    // wrapped continuation lines in auxDown (lowerLayout_, which is multiline).
+    fcitx::Text formattedPreedit;
+    if (!firstLine.empty()) {
+        formattedPreedit.append(firstLine, fcitx::TextFormatFlag::Underline);
+        if (restLines.empty()) {
+            formattedPreedit.setCursor(static_cast<int>(firstLine.size()));
+        }
+    }
+
+    fcitx::Text formattedAuxDown;
+    if (!restLines.empty()) {
+        formattedAuxDown.append(restLines, fcitx::TextFormatFlag::Underline);
     }
 
     std::string displayAuxUp = auxUp;
-    if (!displayAuxUp.empty() && !wrappedPreedit.empty() &&
+    if (!displayAuxUp.empty() && !firstLine.empty() &&
         displayAuxUp.back() != ' ' && displayAuxUp.back() != '\t') {
         displayAuxUp.push_back(' ');
     }
@@ -493,6 +515,7 @@ void GeminiVoiceEngine::setPanelDisplay(fcitx::InputContext *ic,
     panel.setAuxUp(displayAuxUp.empty() ? fcitx::Text()
                                         : fcitx::Text(displayAuxUp));
     panel.setPreedit(formattedPreedit);
+    panel.setAuxDown(formattedAuxDown);
     ic->updatePreedit();
     ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
 }

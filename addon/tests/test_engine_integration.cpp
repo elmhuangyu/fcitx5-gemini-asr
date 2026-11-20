@@ -630,11 +630,12 @@ int main() {
             });
             daemon.waitForCommand(cmdIdx++);
             daemon.sendEvent(
-                R"({"event":"partial_text","text":"一二三四五六"})");
+                R"({"event":"partial_text","text":"一二三四五六七八九十十一"})");
             REQUIRE(waitOnMain(instance, [&]() {
                 return ic->inputPanel().auxUp().toString() == "🔴 " &&
-                       ic->inputPanel().preedit().toString() ==
-                           "一二三四五\n六";
+                       ic->inputPanel().preedit().toString() == "一二三四五" &&
+                       ic->inputPanel().auxDown().toString() ==
+                           "六七八九十\n十一";
             }));
             runOnMain(instance, [&]() {
                 sendKey(ic.get(), fcitx::Key(FcitxKey_Return));

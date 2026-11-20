@@ -42,7 +42,7 @@ FCITX_CONFIGURATION(
     fcitx::Option<std::string> recordingPrefix{this, "RecordingPrefix",
                                                _("Recording Prefix"), "🎙️"};
     fcitx::Option<int, fcitx::IntConstrain> preeditMaxWidth{
-        this, "PreeditMaxWidth", _("Preedit Line Wrap Width"), 50,
+        this, "PreeditMaxWidth", _("Preedit Line Wrap Width"), 80,
         fcitx::IntConstrain(0, 500)};);
 
 class GeminiVoiceEngine : public fcitx::AddonInstance {

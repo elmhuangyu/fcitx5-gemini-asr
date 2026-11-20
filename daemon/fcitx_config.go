@@ -15,7 +15,7 @@ import (
 const (
 	DefaultFcitxSocketPath = "$XDG_RUNTIME_DIR/gemini-ime.sock"
 	DefaultRecordingPrefix = "🎙️"
-	DefaultPreeditMaxWidth = 50
+	DefaultPreeditMaxWidth = 80
 )
 
 type FcitxAddonConfig struct {
