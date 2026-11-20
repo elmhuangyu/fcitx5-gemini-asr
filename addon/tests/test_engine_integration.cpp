@@ -669,11 +669,21 @@ int main() {
             daemon.sendEvent(
                 R"({"event":"partial_text","text":"一二三四五六七八九十十一"})");
             REQUIRE(waitOnMain(instance, [&]() {
-                return ic->inputPanel().auxUp().toString() == "🔴 " &&
-                       ic->inputPanel().preedit().toString() == "一二三四五" &&
-                       ic->inputPanel().auxDown().toString() ==
-                           "六七八九十\n十一";
+                return ic->inputPanel().candidateList() != nullptr;
             }));
+            runOnMain(instance, [&]() {
+                auto cl = ic->inputPanel().candidateList();
+                REQUIRE(ic->inputPanel().auxUp().empty());
+                REQUIRE(ic->inputPanel().preedit().toString() == "🔴");
+                REQUIRE(ic->inputPanel().auxDown().empty());
+                REQUIRE(cl != nullptr);
+                REQUIRE(cl->size() == 1);
+                REQUIRE(cl->candidate(0).hasCustomLabel());
+                REQUIRE(cl->candidate(0).customLabel().empty());
+                REQUIRE(cl->cursorIndex() == -1);
+                REQUIRE(cl->candidate(0).text().toString() ==
+                        "一二三四五\n六七八九十\n十一");
+            });
             runOnMain(instance, [&]() {
                 sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
             });
@@ -685,10 +695,64 @@ int main() {
             runOnMain(instance,
                       [&]() { REQUIRE(ic->committed[4] == "直接上屏"); });
 
+            // 7b. Multiline (>3 lines) raw_text in ACTION_MENU & SUBMENU_REFINE
+            // places continuation lines in candidate[0] without shifting
+            // selection keys or cursor navigation.
+            runOnMain(instance, [&]() {
+                fcitx::RawConfig rawCfg;
+                rawCfg.setValueByPath("ShowActionMenu", "True");
+                rawCfg.setValueByPath("PreeditMaxWidth", "10");
+                addon->setConfig(rawCfg);
+                sendKey(ic.get(), fcitx::Key("Alt+space"));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            runOnMain(instance, [&]() {
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            daemon.sendEvent(
+                R"({"event":"transcribe_done","raw_text":"一二三四五六七八九十十一十二十三十四十五"})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                auto cl = ic->inputPanel().candidateList();
+                return cl && cl->size() == 5 &&
+                       ic->inputPanel().auxUp().empty() &&
+                       ic->inputPanel().preedit().toString() == "🔴" &&
+                       ic->inputPanel().auxDown().empty() &&
+                       cl->candidate(0).hasCustomLabel() &&
+                       cl->candidate(0).customLabel().empty() &&
+                       cl->label(1).toString() == "1. " &&
+                       cl->candidate(0).text().toString() ==
+                           "一二三四五\n六七八九十\n十一十二十\n三十四十五" &&
+                       cl->cursorIndex() == 1;
+            }));
+            runOnMain(instance, [&]() {
+                auto cl = ic->inputPanel().candidateList();
+                // Up from index 1 wraps to last action (index 4), skipping 0.
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Up));
+                REQUIRE(cl->cursorIndex() == 4);
+                // Down from index 4 wraps to index 1, skipping 0.
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Down));
+                REQUIRE(cl->cursorIndex() == 1);
+                // Digit '2' opens Refine submenu (also multiline).
+                sendKey(ic.get(), fcitx::Key(FcitxKey_2));
+                cl = ic->inputPanel().candidateList();
+                REQUIRE(cl && cl->size() == 5);
+                REQUIRE(cl->candidate(0).hasCustomLabel());
+                REQUIRE(cl->candidate(0).customLabel().empty());
+                REQUIRE(cl->cursorIndex() == 1);
+                // Back to Action menu and press '1' to commit raw_text.
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Left));
+                sendKey(ic.get(), fcitx::Key(FcitxKey_1));
+                REQUIRE(ic->committed.size() == 6);
+                REQUIRE(ic->committed[5] ==
+                        "一二三四五六七八九十十一十二十三十四十五");
+            });
+
             // 8. Unload safety: capture CandidateList before engine teardown
             runOnMain(instance, [&]() {
                 fcitx::RawConfig rawCfg;
                 rawCfg.setValueByPath("ShowActionMenu", "True");
+                rawCfg.setValueByPath("PreeditMaxWidth", "80");
                 addon->setConfig(rawCfg);
                 sendKey(ic.get(), fcitx::Key("Alt+space"));
             });

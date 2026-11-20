@@ -26,8 +26,13 @@ class ActionCandidateWord : public fcitx::CandidateWord {
 public:
     using Callback = std::function<void(fcitx::InputContext *)>;
 
-    ActionCandidateWord(fcitx::Text text, Callback cb)
-        : fcitx::CandidateWord(std::move(text)), cb_(std::move(cb)) {}
+    ActionCandidateWord(fcitx::Text text, Callback cb,
+                        bool emptyCustomLabel = false)
+        : fcitx::CandidateWord(std::move(text)), cb_(std::move(cb)) {
+        if (emptyCustomLabel) {
+            setCustomLabel(fcitx::Text());
+        }
+    }
 
     void select(fcitx::InputContext *ic) const override {
         if (cb_) {
@@ -266,12 +271,15 @@ void GeminiVoiceEngine::setConfig(const fcitx::RawConfig &config) {
 }
 
 void GeminiVoiceEngine::onKeyEvent(fcitx::KeyEvent &keyEvent) {
-    if (keyEvent.isRelease()) {
+    auto *ic = keyEvent.inputContext();
+    if (!ic) {
         return;
     }
 
-    auto *ic = keyEvent.inputContext();
-    if (!ic) {
+    if (keyEvent.isRelease()) {
+        if (state_ != State::IDLE && activeIC_.get() == ic) {
+            keyEvent.filterAndAccept();
+        }
         return;
     }
 
@@ -370,39 +378,12 @@ void GeminiVoiceEngine::handleActionMenuKey(fcitx::InputContext *ic,
     }
 
     const auto &key = keyEvent.key();
-    int digit = key.digitSelection();
-    if (digit >= 0 && digit < candList->size()) {
-        candList->candidate(digit).select(ic);
-        return;
-    }
-
-    if (key.check(FcitxKey_space) || key.check(FcitxKey_Return) ||
-        key.check(FcitxKey_KP_Enter)) {
-        int idx = candList->cursorIndex();
-        if (idx >= 0 && idx < candList->size()) {
-            candList->candidate(idx).select(ic);
-        }
+    if (handleCandidateMenuKey(ic, *candList, key)) {
         return;
     }
 
     if (key.check(FcitxKey_Right)) {
         showRefineSubmenu(ic);
-        return;
-    }
-
-    if (key.check(FcitxKey_Up)) {
-        if (auto *movable = candList->toCursorMovable()) {
-            movable->prevCandidate();
-            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-        }
-        return;
-    }
-
-    if (key.check(FcitxKey_Down)) {
-        if (auto *movable = candList->toCursorMovable()) {
-            movable->nextCandidate();
-            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-        }
         return;
     }
 
@@ -421,34 +402,7 @@ void GeminiVoiceEngine::handleSubmenuRefineKey(fcitx::InputContext *ic,
     }
 
     const auto &key = keyEvent.key();
-    int digit = key.digitSelection();
-    if (digit >= 0 && digit < candList->size()) {
-        candList->candidate(digit).select(ic);
-        return;
-    }
-
-    if (key.check(FcitxKey_space) || key.check(FcitxKey_Return) ||
-        key.check(FcitxKey_KP_Enter)) {
-        int idx = candList->cursorIndex();
-        if (idx >= 0 && idx < candList->size()) {
-            candList->candidate(idx).select(ic);
-        }
-        return;
-    }
-
-    if (key.check(FcitxKey_Up)) {
-        if (auto *movable = candList->toCursorMovable()) {
-            movable->prevCandidate();
-            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-        }
-        return;
-    }
-
-    if (key.check(FcitxKey_Down)) {
-        if (auto *movable = candList->toCursorMovable()) {
-            movable->nextCandidate();
-            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
-        }
+    if (handleCandidateMenuKey(ic, *candList, key)) {
         return;
     }
 
@@ -456,6 +410,57 @@ void GeminiVoiceEngine::handleSubmenuRefineKey(fcitx::InputContext *ic,
         key.check(FcitxKey_BackSpace)) {
         showActionMenu(ic);
     }
+}
+
+bool GeminiVoiceEngine::handleCandidateMenuKey(fcitx::InputContext *ic,
+                                               fcitx::CandidateList &candList,
+                                               const fcitx::Key &key) {
+    const bool hasHeader = candList.size() > 0 &&
+                           candList.candidate(0).hasCustomLabel() &&
+                           candList.candidate(0).customLabel().empty();
+    const int minIdx = hasHeader ? 1 : 0;
+
+    int digit = key.digitSelection();
+    if (digit >= 0) {
+        int target = digit + minIdx;
+        if (target >= minIdx && target < candList.size()) {
+            candList.candidate(target).select(ic);
+        }
+        return true;
+    }
+
+    if (key.check(FcitxKey_space) || key.check(FcitxKey_Return) ||
+        key.check(FcitxKey_KP_Enter)) {
+        int idx = candList.cursorIndex();
+        if (idx >= minIdx && idx < candList.size()) {
+            candList.candidate(idx).select(ic);
+        }
+        return true;
+    }
+
+    if (key.check(FcitxKey_Up)) {
+        if (auto *movable = candList.toCursorMovable()) {
+            movable->prevCandidate();
+            if (hasHeader && candList.cursorIndex() == 0) {
+                movable->prevCandidate();
+            }
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+        }
+        return true;
+    }
+
+    if (key.check(FcitxKey_Down)) {
+        if (auto *movable = candList.toCursorMovable()) {
+            movable->nextCandidate();
+            if (hasHeader && candList.cursorIndex() == 0) {
+                movable->nextCandidate();
+            }
+            ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+        }
+        return true;
+    }
+
+    return false;
 }
 
 void GeminiVoiceEngine::handleProcessingKey(fcitx::InputContext *ic,
@@ -466,58 +471,118 @@ void GeminiVoiceEngine::handleProcessingKey(fcitx::InputContext *ic,
     }
 }
 
+namespace {
+
+fcitx::Text buildMultilineDisplayText(const std::string &wrappedPreedit) {
+    fcitx::Text out;
+    if (!wrappedPreedit.empty()) {
+        out.append(wrappedPreedit, fcitx::TextFormatFlag::Underline);
+    }
+    return out;
+}
+
+void applyPanel(fcitx::InputContext *ic, const std::string &auxUp,
+                const std::string &wrappedPreedit, bool isMultiline,
+                std::unique_ptr<fcitx::CandidateList> candList) {
+    auto &panel = ic->inputPanel();
+    panel.setClientPreedit(fcitx::Text());
+    panel.setAuxDown(fcitx::Text());
+
+    if (isMultiline) {
+        // Keep preedit non-empty in upperLayout_ while placing all wrapped
+        // text lines inside a single CandidateWord MultilineLayout so line
+        // spacing across lines 1..N is uniform.
+        panel.setAuxUp(fcitx::Text());
+        panel.setPreedit(auxUp.empty() ? fcitx::Text() : fcitx::Text(auxUp));
+    } else {
+        fcitx::Text formattedPreedit;
+        if (!wrappedPreedit.empty()) {
+            formattedPreedit.append(wrappedPreedit,
+                                    fcitx::TextFormatFlag::Underline);
+            formattedPreedit.setCursor(static_cast<int>(wrappedPreedit.size()));
+        }
+
+        std::string displayAuxUp = auxUp;
+        if (!displayAuxUp.empty() && !wrappedPreedit.empty() &&
+            displayAuxUp.back() != ' ' && displayAuxUp.back() != '\t') {
+            displayAuxUp.push_back(' ');
+        }
+
+        panel.setAuxUp(displayAuxUp.empty() ? fcitx::Text()
+                                            : fcitx::Text(displayAuxUp));
+        panel.setPreedit(formattedPreedit);
+    }
+
+    panel.setCandidateList(std::move(candList));
+    ic->updatePreedit();
+    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+}
+
+} // namespace
+
 void GeminiVoiceEngine::setPanelDisplay(fcitx::InputContext *ic,
                                         const std::string &auxUp,
                                         const std::string &preeditText) {
     if (!ic) {
         return;
     }
-    const std::string wrappedPreedit =
+    const std::string wrapped =
         wrapPreeditText(preeditText, *config_.preeditMaxWidth);
-
-    std::string firstLine;
-    std::string restLines;
-    if (!wrappedPreedit.empty()) {
-        const size_t nl = wrappedPreedit.find('\n');
-        if (nl == std::string::npos) {
-            firstLine = wrappedPreedit;
-        } else {
-            firstLine = wrappedPreedit.substr(0, nl);
-            restLines = wrappedPreedit.substr(nl + 1);
-        }
-    }
+    const bool isMultiline = wrapped.find('\n') != std::string::npos;
 
     // Fcitx5 classicui forces upperLayout_ (auxUp + preedit) into Pango
-    // single-paragraph mode, which renders '\n' as a visible return glyph
-    // instead of breaking lines. Keep only the first line in preedit and place
-    // wrapped continuation lines in auxDown (lowerLayout_, which is multiline).
-    fcitx::Text formattedPreedit;
-    if (!firstLine.empty()) {
-        formattedPreedit.append(firstLine, fcitx::TextFormatFlag::Underline);
-        if (restLines.empty()) {
-            formattedPreedit.setCursor(static_cast<int>(firstLine.size()));
+    // single-paragraph mode, and hardcodes auxDownTextNode_'s Yoga height to
+    // a single fontHeight (so >=2 lines in auxDown overflow and clip at ~2.5
+    // lines). When wrapped text spans multiple lines, place all lines in a
+    // vertical CandidateList item so height and line spacing are uniform.
+    std::unique_ptr<fcitx::CommonCandidateList> contList;
+    if (isMultiline) {
+        contList = std::make_unique<fcitx::CommonCandidateList>();
+        contList->setLayoutHint(fcitx::CandidateLayoutHint::Vertical);
+        contList->setPageSize(1);
+        contList->setLabels({""});
+        contList->append<ActionCandidateWord>(
+            buildMultilineDisplayText(wrapped), ActionCandidateWord::Callback{},
+            true);
+        contList->setGlobalCursorIndex(-1);
+    }
+
+    applyPanel(ic, auxUp, wrapped, isMultiline, std::move(contList));
+}
+
+void GeminiVoiceEngine::applyMenuPanel(
+    fcitx::InputContext *ic, const std::string &auxUp,
+    const std::string &rawText,
+    std::unique_ptr<fcitx::CommonCandidateList> list) {
+    if (!ic || !list) {
+        return;
+    }
+    const std::string wrapped =
+        wrapPreeditText(rawText, *config_.preeditMaxWidth);
+    const bool isMultiline = wrapped.find('\n') != std::string::npos;
+
+    std::string effectiveAuxUp = auxUp;
+    if (isMultiline) {
+        if (effectiveAuxUp.empty()) {
+            effectiveAuxUp = *config_.recordingPrefix;
         }
+        const int actionCount = list->totalSize();
+        list->insert(0, std::make_unique<ActionCandidateWord>(
+                            buildMultilineDisplayText(wrapped),
+                            ActionCandidateWord::Callback{}, true));
+        std::vector<std::string> labels;
+        labels.reserve(static_cast<size_t>(actionCount) + 1);
+        labels.emplace_back("");
+        for (int i = 1; i <= actionCount; ++i) {
+            labels.push_back(std::to_string(i) + ". ");
+        }
+        list->setLabels(labels);
+        list->setGlobalCursorIndex(1);
+    } else {
+        list->setGlobalCursorIndex(0);
     }
 
-    fcitx::Text formattedAuxDown;
-    if (!restLines.empty()) {
-        formattedAuxDown.append(restLines, fcitx::TextFormatFlag::Underline);
-    }
-
-    std::string displayAuxUp = auxUp;
-    if (!displayAuxUp.empty() && !firstLine.empty() &&
-        displayAuxUp.back() != ' ' && displayAuxUp.back() != '\t') {
-        displayAuxUp.push_back(' ');
-    }
-
-    auto &panel = ic->inputPanel();
-    panel.setClientPreedit(fcitx::Text());
-    panel.setAuxUp(displayAuxUp.empty() ? fcitx::Text()
-                                        : fcitx::Text(displayAuxUp));
-    panel.setPreedit(formattedPreedit);
-    panel.setAuxDown(formattedAuxDown);
-    ic->updatePreedit();
-    ic->updateUserInterface(fcitx::UserInterfaceComponent::InputPanel);
+    applyPanel(ic, effectiveAuxUp, wrapped, isMultiline, std::move(list));
 }
 
 void GeminiVoiceEngine::clearSession(fcitx::InputContext *ic) {
@@ -591,12 +656,7 @@ void GeminiVoiceEngine::showActionMenu(fcitx::InputContext *ic) {
             triggerPostProcess(targetIc, "ask_ai");
         });
 
-    list->setGlobalCursorIndex(0);
-
-    auto &panel = ic->inputPanel();
-    panel.setAuxDown(fcitx::Text());
-    panel.setCandidateList(std::move(list));
-    setPanelDisplay(ic, "", rawText_);
+    applyMenuPanel(ic, "", rawText_, std::move(list));
 }
 
 void GeminiVoiceEngine::showRefineSubmenu(fcitx::InputContext *ic) {
@@ -646,12 +706,7 @@ void GeminiVoiceEngine::showRefineSubmenu(fcitx::InputContext *ic) {
             triggerPostProcess(targetIc, "as_prompt");
         });
 
-    list->setGlobalCursorIndex(0);
-
-    auto &panel = ic->inputPanel();
-    panel.setAuxDown(fcitx::Text());
-    panel.setCandidateList(std::move(list));
-    setPanelDisplay(ic, _("Refine ▸"), rawText_);
+    applyMenuPanel(ic, _("Refine ▸"), rawText_, std::move(list));
 }
 
 void GeminiVoiceEngine::triggerPostProcess(fcitx::InputContext *ic,

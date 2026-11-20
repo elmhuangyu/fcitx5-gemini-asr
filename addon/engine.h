@@ -21,6 +21,11 @@
 #include <fcitx/inputcontext.h>
 #include <fcitx/instance.h>
 
+namespace fcitx {
+class CandidateList;
+class CommonCandidateList;
+} // namespace fcitx
+
 namespace fcitx_gemini_voice {
 
 FCITX_CONFIGURATION(
@@ -82,8 +87,14 @@ private:
     void handleProcessingKey(fcitx::InputContext *ic,
                              fcitx::KeyEvent &keyEvent);
 
+    bool handleCandidateMenuKey(fcitx::InputContext *ic,
+                                fcitx::CandidateList &candList,
+                                const fcitx::Key &key);
     void setPanelDisplay(fcitx::InputContext *ic, const std::string &auxUp,
                          const std::string &preeditText);
+    void applyMenuPanel(fcitx::InputContext *ic, const std::string &auxUp,
+                        const std::string &rawText,
+                        std::unique_ptr<fcitx::CommonCandidateList> list);
     void clearSession(fcitx::InputContext *ic);
     void showActionMenu(fcitx::InputContext *ic);
     void showRefineSubmenu(fcitx::InputContext *ic);
