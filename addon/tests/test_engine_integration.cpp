@@ -931,6 +931,30 @@ int main() {
                 REQUIRE(ic->committed[9] == "Ciao");
             }
 
+            // 7d. Disconnected daemon must NOT call ic->reset() on trigger
+            {
+                std::atomic<int> resetEvents{0};
+                auto resetWatcher = instance.watchEvent(
+                    fcitx::EventType::InputContextReset,
+                    fcitx::EventWatcherPhase::Default,
+                    [&](fcitx::Event &) { ++resetEvents; });
+                const std::string badSockPath =
+                    (root / "nonexistent.sock").string();
+                runOnMain(instance, [&]() {
+                    fcitx::RawConfig rawCfg;
+                    rawCfg.setValueByPath("SocketPath", badSockPath);
+                    addon->setConfig(rawCfg);
+                    ic->inputPanel().setClientPreedit(fcitx::Text("nihao"));
+                    sendKey(ic.get(), fcitx::Key("Alt+space"));
+                    REQUIRE(resetEvents.load() == 0);
+                    REQUIRE(ic->inputPanel().clientPreedit().toString() ==
+                            "nihao");
+                    ic->inputPanel().reset();
+                    rawCfg.setValueByPath("SocketPath", sockPath);
+                    addon->setConfig(rawCfg);
+                });
+            }
+
             // 8. Unload safety: capture CandidateList before engine teardown
             runOnMain(instance, [&]() {
                 fcitx::RawConfig rawCfg;

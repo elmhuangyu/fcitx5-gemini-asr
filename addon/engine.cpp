@@ -325,10 +325,6 @@ void GeminiVoiceEngine::handleIdleKey(fcitx::InputContext *ic,
         return;
     }
     keyEvent.filterAndAccept();
-    // Clear any active preedit from the underlying input method before
-    // starting a voice session; state_ is still IDLE so InputContextReset
-    // will not self-cancel.
-    ic->reset();
 
     std::string cmd =
         buildCommandJson("start_recording", {{"language", *config_.language}});
@@ -339,6 +335,11 @@ void GeminiVoiceEngine::handleIdleKey(fcitx::InputContext *ic,
             ic, _("Gemini Voice Daemon not connected"));
         return;
     }
+
+    // Clear any active preedit from the underlying input method only after
+    // start_recording succeeds; state_ is still IDLE so InputContextReset
+    // will not self-cancel.
+    ic->reset();
 
     activeIC_ = ic->watch();
     partialText_.clear();
