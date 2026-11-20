@@ -406,6 +406,31 @@ func parseActionKey(k string, prefixes ...string) (string, bool) {
 	return "", false
 }
 
+func resolveTranslateModelAction(cfg Config, raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(lower, "translate_") || strings.HasPrefix(lower, "translate-") {
+		trimmed = strings.TrimSpace(trimmed[len("translate_"):])
+		if trimmed == "" {
+			return "", false
+		}
+	}
+	alias := strings.ToLower(trimmed)
+	alias = strings.ReplaceAll(alias, "_", "-")
+	alias = strings.ReplaceAll(alias, " ", "-")
+	if known, ok := knownTranslateLanguages[alias]; ok {
+		return known.Action, true
+	}
+	target, ok := ResolveTranslateTarget(trimmed)
+	if ok && isKnownOrConfiguredAction(cfg, target.Action) {
+		return target.Action, true
+	}
+	return "", false
+}
+
 func isKnownOrConfiguredAction(cfg Config, action string) bool {
 	for _, known := range KnownActions {
 		if action == known {
@@ -768,16 +793,10 @@ func cmdModels(args []string, deps cliDeps) int {
 			_, _ = fmt.Fprintln(deps.stderr, "error: --translate language cannot be empty")
 			return 2
 		}
-		var action string
-		if strings.HasPrefix(lang, "translate_") {
-			action = lang
-		} else {
-			target, ok := ResolveTranslateTarget(lang)
-			if !ok {
-				_, _ = fmt.Fprintf(deps.stderr, "error: invalid translation target %q\n", lang)
-				return 2
-			}
-			action = target.Action
+		action, ok := resolveTranslateModelAction(cfg, lang)
+		if !ok {
+			_, _ = fmt.Fprintf(deps.stderr, "error: unknown translation target %q (use a known language like en, ja, zh-cn or configure it in post_process.translate_languages)\n", lang)
+			return 2
 		}
 		setActionModelOverride(&cfg, action, model)
 		dirty = true

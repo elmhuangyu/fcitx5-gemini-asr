@@ -533,6 +533,57 @@ func TestCLI_ModelsTranslateFlag(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected exit 2 for invalid --translate format, got %d", code)
 	}
+
+	// Hyphenated/underscored translate-jp / translate_jp resolves to translate_ja without double-prefixing.
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLI("gemini-voice", []string{
+		"models", "--config", cfgPath,
+		"--translate", "translate-jp=gemini-2.5-flash",
+		"--translate", "fr=gemini-2.5-pro",
+	}, deps)
+	if code != 0 {
+		t.Fatalf("models --translate translate-jp exit=%d stderr=%s", code, stderr.String())
+	}
+	loaded, err = LoadConfigFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ModelForAction("translate_ja") != "gemini-2.5-flash" {
+		t.Fatalf("expected translate_ja=gemini-2.5-flash, got %q", loaded.ModelForAction("translate_ja"))
+	}
+	if _, doublePrefixed := loaded.PostProcess.Models["translate_translate_jp"]; doublePrefixed {
+		t.Fatalf("unexpected double-prefixed key translate_translate_jp in %+v", loaded.PostProcess.Models)
+	}
+	if loaded.ModelForAction("translate_fr") != "gemini-2.5-pro" {
+		t.Fatalf("expected translate_fr=gemini-2.5-pro, got %q", loaded.ModelForAction("translate_fr"))
+	}
+
+	// Unknown/unsupported or malformed targets return exit 2.
+	for _, badSpec := range []string{
+		"klingon=gemini-2.5-flash",
+		"translate-klingon=gemini-2.5-flash",
+		"translate_klingon=gemini-2.5-flash",
+		"translate-=gemini-2.5-flash",
+		"translate_=gemini-2.5-flash",
+	} {
+		stdout.Reset()
+		stderr.Reset()
+		if code := runCLI("gemini-voice", []string{"models", "--config", cfgPath, "--translate", badSpec}, deps); code != 2 {
+			t.Fatalf("expected exit 2 for --translate %q, got %d (stderr=%s)", badSpec, code, stderr.String())
+		}
+	}
+
+	// Configured custom target language is accepted.
+	cfg.PostProcess.TranslateLanguages = []string{"ja", "zh-cn", "粤语"}
+	if err := SaveConfigFile(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCLI("gemini-voice", []string{"models", "--config", cfgPath, "--translate", "粤语=gemini-2.5-flash-lite"}, deps); code != 0 {
+		t.Fatalf("expected configured custom language accepted, exit=%d stderr=%s", code, stderr.String())
+	}
 }
 
 func TestCLI_ImeTranslateLanguagesResetAndMigration(t *testing.T) {
