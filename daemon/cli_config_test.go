@@ -534,3 +534,85 @@ func TestCLI_ModelsTranslateFlag(t *testing.T) {
 		t.Fatalf("expected exit 2 for invalid --translate format, got %d", code)
 	}
 }
+
+func TestCLI_ImeTranslateLanguagesResetAndMigration(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+
+	var stdout, stderr bytes.Buffer
+	reloadCalls := 0
+	deps := cliDeps{
+		stdin:  strings.NewReader(""),
+		stdout: &stdout,
+		stderr: &stderr,
+		isTTY:  func() bool { return false },
+		runCmd: func(ctx context.Context, stdin string, name string, args ...string) cmdResult {
+			if name == "fcitx5-remote" {
+				reloadCalls++
+			}
+			return cmdResult{}
+		},
+		lookPath: func(file string) (string, error) { return "/usr/bin/" + file, nil },
+		getenv:   func(string) string { return "" },
+		serveFn:  func(string, string) int { return 0 },
+	}
+
+	// Write legacy gemini-voice.conf with orphaned [TranslateLanguages] 0=en.
+	legacy := DefaultFcitxAddonConfig()
+	legacy.TranslateLanguages = []string{"en"}
+	if err := SaveFcitxAddonConfig(fcitxPath, legacy); err != nil {
+		t.Fatal(err)
+	}
+
+	// Setting post_process.translate_languages triggers one-time migration of orphaned 0=en.
+	if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "post_process.translate_languages", "en,ja"}, deps); code != 0 {
+		t.Fatalf("config set post_process.translate_languages exit=%d stderr=%s", code, stderr.String())
+	}
+	if reloadCalls != 1 {
+		t.Fatalf("expected fcitx5-remote reload after migration, got %d", reloadCalls)
+	}
+	raw, err := os.ReadFile(fcitxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "[TranslateLanguages]") {
+		t.Fatalf("expected [TranslateLanguages] omitted after migration, got:\n%s", raw)
+	}
+
+	// Explicitly setting ime.translate_languages=en after migration is preserved.
+	if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "ime.translate_languages", "en"}, deps); code != 0 {
+		t.Fatalf("config set ime.translate_languages=en exit=%d stderr=%s", code, stderr.String())
+	}
+	fcitxCfg, err := LoadFcitxAddonConfig(fcitxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fcitxCfg.TranslateLanguages, []string{"en"}) {
+		t.Fatalf("expected [en], got %#v", fcitxCfg.TranslateLanguages)
+	}
+
+	// Resetting with "default" or "" clears TranslateLanguages and omits [TranslateLanguages].
+	for _, resetVal := range []string{"default", ""} {
+		if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "ime.translate_languages", "ja,fr"}, deps); code != 0 {
+			t.Fatalf("config set ime.translate_languages=ja,fr exit=%d stderr=%s", code, stderr.String())
+		}
+		if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "ime.translate_languages", resetVal}, deps); code != 0 {
+			t.Fatalf("config set ime.translate_languages=%q exit=%d stderr=%s", resetVal, code, stderr.String())
+		}
+		raw, err = os.ReadFile(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(raw), "[TranslateLanguages]") {
+			t.Fatalf("expected [TranslateLanguages] omitted after reset %q, got:\n%s", resetVal, raw)
+		}
+		stdout.Reset()
+		if code := runCLI("gemini-voice", []string{"config", "get", "-config", cfgPath, "-fcitx-config", fcitxPath, "ime.translate_languages"}, deps); code != 0 {
+			t.Fatalf("config get ime.translate_languages exit=%d stderr=%s", code, stderr.String())
+		}
+		if got := strings.TrimSpace(stdout.String()); got != "" {
+			t.Fatalf("expected empty ime.translate_languages after reset %q, got %q", resetVal, got)
+		}
+	}
+}

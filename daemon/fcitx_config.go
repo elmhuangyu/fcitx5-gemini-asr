@@ -31,7 +31,7 @@ type FcitxAddonConfig struct {
 func DefaultFcitxAddonConfig() FcitxAddonConfig {
 	return FcitxAddonConfig{
 		TriggerKeys:        []string{"Alt+space"},
-		TranslateLanguages: []string{"en"},
+		TranslateLanguages: nil,
 		ShowActionMenu:     true,
 		SocketPath:         DefaultFcitxSocketPath,
 		Language:           "",
@@ -209,20 +209,63 @@ func renderFcitxAddonConfig(cfg FcitxAddonConfig) []byte {
 		}
 		fmt.Fprintf(&b, "%d=%s\n", i, quoteFcitxValue(trimmed))
 	}
-	translateLangs := cfg.TranslateLanguages
-	if len(translateLangs) == 0 {
-		translateLangs = []string{"en"}
-	}
-	b.WriteByte('\n')
-	b.WriteString("[TranslateLanguages]\n")
-	for i, l := range translateLangs {
-		trimmed := strings.TrimSpace(l)
-		if trimmed == "" {
-			continue
+	var translateLangs []string
+	for _, l := range cfg.TranslateLanguages {
+		if trimmed := strings.TrimSpace(l); trimmed != "" {
+			translateLangs = append(translateLangs, trimmed)
 		}
-		fmt.Fprintf(&b, "%d=%s\n", i, quoteFcitxValue(trimmed))
+	}
+	if len(translateLangs) > 0 {
+		b.WriteByte('\n')
+		b.WriteString("[TranslateLanguages]\n")
+		for i, l := range translateLangs {
+			fmt.Fprintf(&b, "%d=%s\n", i, quoteFcitxValue(l))
+		}
 	}
 	return []byte(b.String())
+}
+
+func translateMigrationMarkerPath(configPath string) string {
+	return filepath.Join(filepath.Dir(configPath), ".translate_languages_migrated")
+}
+
+// MigrateOrphanedFcitxTranslateLanguages performs a one-time migration for
+// existing users whose gemini-voice.conf has the old default [TranslateLanguages] 0=en.
+// Clearing it allows Fcitx5 to fall back to the daemon's translate_targets.
+func MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath string) (bool, error) {
+	if markerPath != "" {
+		if _, err := os.Stat(markerPath); err == nil {
+			return false, nil
+		}
+	}
+	if _, err := os.Stat(fcitxPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			if markerPath != "" {
+				_ = writeConfigFileAtomic(markerPath, []byte("1\n"), "translate migration marker")
+			}
+			return false, nil
+		}
+		return false, err
+	}
+
+	cfg, err := LoadFcitxAddonConfig(fcitxPath)
+	if err != nil {
+		return false, err
+	}
+
+	migrated := false
+	if len(cfg.TranslateLanguages) == 1 && strings.EqualFold(strings.TrimSpace(cfg.TranslateLanguages[0]), "en") {
+		cfg.TranslateLanguages = nil
+		if err := SaveFcitxAddonConfig(fcitxPath, cfg); err != nil {
+			return false, err
+		}
+		migrated = true
+	}
+
+	if markerPath != "" {
+		_ = writeConfigFileAtomic(markerPath, []byte("1\n"), "translate migration marker")
+	}
+	return migrated, nil
 }
 
 // SaveFcitxAddonConfig writes Fcitx5's gemini-voice.conf INI file atomically.

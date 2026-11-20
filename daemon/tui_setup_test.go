@@ -212,6 +212,9 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	if !reflect.DeepEqual(cfg.PostProcess.TranslateLanguages, []string{"en", "ja"}) {
 		t.Fatalf("PostProcess.TranslateLanguages = %#v, want [en ja]", cfg.PostProcess.TranslateLanguages)
 	}
+	if len(fcitxCfg.TranslateLanguages) != 0 {
+		t.Fatalf("FcitxAddonConfig.TranslateLanguages = %#v, want empty (follow daemon)", fcitxCfg.TranslateLanguages)
+	}
 	if cfg.Connection.Proxy != "socks5://127.0.0.1:1080" {
 		t.Fatalf("proxy = %q", cfg.Connection.Proxy)
 	}

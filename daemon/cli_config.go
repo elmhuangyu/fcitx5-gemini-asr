@@ -136,6 +136,11 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 		wrapWidth = "0 (disabled)"
 	}
 
+	fcitxTranslate := strings.Join(fcitxCfg.TranslateLanguages, ", ")
+	if fcitxTranslate == "" {
+		fcitxTranslate = "(use daemon)"
+	}
+
 	_, _ = fmt.Fprintf(w, "Fcitx5 addon config (%s):\n", fcitxPath)
 	_, _ = fmt.Fprintf(w, "  ime.mode:                 %s\n", mode)
 	_, _ = fmt.Fprintf(w, "  ime.show_action_menu:     %t\n", fcitxCfg.ShowActionMenu)
@@ -144,7 +149,7 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	_, _ = fmt.Fprintf(w, "  ime.language:             %s\n", fcitxLang)
 	_, _ = fmt.Fprintf(w, "  ime.recording_prefix:     %s\n", recPrefix)
 	_, _ = fmt.Fprintf(w, "  ime.preedit_max_width:    %s\n", wrapWidth)
-	_, _ = fmt.Fprintf(w, "  ime.translate_languages:  %s\n", strings.Join(fcitxCfg.TranslateLanguages, ", "))
+	_, _ = fmt.Fprintf(w, "  ime.translate_languages:  %s\n", fcitxTranslate)
 
 	_, _ = fmt.Fprintf(w, "\nDaemon config (%s):\n", configPath)
 	_, _ = fmt.Fprintf(w, "  connection.proxy:         %s\n", proxyVal)
@@ -312,6 +317,10 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 		_, _ = fmt.Fprintf(deps.stderr, "error: load config %q: %v\n", *configPath, err)
 		return 1
 	}
+	migratedFcitx, migErr := MigrateOrphanedFcitxTranslateLanguages(*fcitxPath, translateMigrationMarkerPath(*configPath))
+	if migErr != nil {
+		_, _ = fmt.Fprintf(deps.stderr, "warning: migrate fcitx translate_languages: %v\n", migErr)
+	}
 	fcitxCfg, err := LoadFcitxAddonConfig(*fcitxPath)
 	if err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
@@ -354,6 +363,8 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 		} else {
 			_, _ = fmt.Fprintf(deps.stdout, "Updated %s in %s\n", key, *fcitxPath)
 		}
+	} else if migratedFcitx {
+		ReloadFcitx5Config(context.Background(), deps)
 	}
 	return 0
 }
@@ -510,13 +521,14 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 		fcitxCfg.PreeditMaxWidth = w
 		return false, true, nil
 	case "ime.translate_languages":
-		if strings.EqualFold(strings.TrimSpace(val), "default") {
-			fcitxCfg.TranslateLanguages = []string{"en"}
+		trimmed := strings.TrimSpace(val)
+		if trimmed == "" || strings.EqualFold(trimmed, "default") || strings.EqualFold(trimmed, "none") || trimmed == "-" {
+			fcitxCfg.TranslateLanguages = nil
 			return false, true, nil
 		}
 		langs, listErr := parseCommaList(val)
 		if listErr != nil || len(langs) == 0 {
-			return false, false, errors.New("ime.translate_languages requires at least one language (e.g. en)")
+			return false, false, errors.New("ime.translate_languages requires at least one language (or \"default\" to follow daemon)")
 		}
 		fcitxCfg.TranslateLanguages = langs
 		return false, true, nil

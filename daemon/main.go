@@ -35,6 +35,12 @@ func defaultSocketPath() string {
 }
 
 func runDaemon(configPath, socketPath string) int {
+	if migrated, migErr := MigrateOrphanedFcitxTranslateLanguages(DefaultFcitxConfigPath(), translateMigrationMarkerPath(configPath)); migErr != nil {
+		log.Printf("migrate fcitx translate_languages: %v", migErr)
+	} else if migrated {
+		log.Printf("migrated orphaned [TranslateLanguages] 0=en from %s", DefaultFcitxConfigPath())
+	}
+
 	cfgMgr, err := NewConfigManager(configPath)
 	if err != nil {
 		log.Printf("init config: %v", err)

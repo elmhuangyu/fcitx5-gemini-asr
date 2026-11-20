@@ -366,9 +366,6 @@ func applySetupFormState(cfg *Config, fcitxCfg *FcitxAddonConfig, state *setupFo
 	if _, _, err := setConfigKey(cfg, fcitxCfg, "post_process.translate_languages", state.translateLanguages); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "ime.translate_languages", state.translateLanguages); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -390,6 +387,7 @@ func runSetupTUI(configPath, fcitxConfigPath string, opts setupFormOptions, deps
 	if err != nil {
 		return setupResult{}, fmt.Errorf("load config %q: %w", configPath, err)
 	}
+	_, _ = MigrateOrphanedFcitxTranslateLanguages(fcitxConfigPath, translateMigrationMarkerPath(configPath))
 	fcitxCfg, err := LoadFcitxAddonConfig(fcitxConfigPath)
 	if err != nil {
 		return setupResult{}, err
