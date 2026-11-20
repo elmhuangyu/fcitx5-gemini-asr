@@ -268,7 +268,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 					}
 					return nil
 				}),
-		).Title("5. Vocabulary, Hotkey & Network"),
+		).Title("5. Translation, Vocabulary, Hotkey & Network"),
 	)
 
 	if opts.IncludeAPIKey {

@@ -665,6 +665,17 @@ func setActionModelOverride(cfg *Config, action, val string) {
 	cfg.PostProcess.Models[action] = trimmed
 }
 
+type stringSliceFlag []string
+
+func (s *stringSliceFlag) String() string {
+	return strings.Join(*s, ",")
+}
+
+func (s *stringSliceFlag) Set(val string) error {
+	*s = append(*s, val)
+	return nil
+}
+
 func cmdModels(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("models", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
@@ -676,6 +687,8 @@ func cmdModels(args []string, deps cliDeps) int {
 	casual := fs.String("refine-casual", "", "Set model override for refine_casual (\"default\" clears)")
 	formal := fs.String("refine-formal", "", "Set model override for refine_formal (\"default\" clears)")
 	translateEn := fs.String("translate-en", "", "Set model override for translate_en (\"default\" clears)")
+	var translateFlags stringSliceFlag
+	fs.Var(&translateFlags, "translate", "Set model override for a translation target as <lang>=<model> (e.g. ja=gemini-2.5-flash, \"<lang>=default\" clears)")
 	asPrompt := fs.String("as-prompt", "", "Set model override for as_prompt (\"default\" clears)")
 	askAI := fs.String("ask-ai", "", "Set model override for ask_ai (\"default\" clears)")
 	if err := fs.Parse(args); err != nil {
@@ -731,6 +744,31 @@ func cmdModels(args []string, deps cliDeps) int {
 			setActionModelOverride(&cfg, af.action, af.val)
 			dirty = true
 		}
+	}
+	for _, spec := range translateFlags {
+		lang, model, ok := strings.Cut(spec, "=")
+		if !ok {
+			_, _ = fmt.Fprintln(deps.stderr, "error: --translate must be in <lang>=<model> format (e.g. --translate ja=gemini-2.5-flash)")
+			return 2
+		}
+		lang = strings.TrimSpace(lang)
+		if lang == "" {
+			_, _ = fmt.Fprintln(deps.stderr, "error: --translate language cannot be empty")
+			return 2
+		}
+		var action string
+		if strings.HasPrefix(lang, "translate_") {
+			action = lang
+		} else {
+			target, ok := ResolveTranslateTarget(lang)
+			if !ok {
+				_, _ = fmt.Fprintf(deps.stderr, "error: invalid translation target %q\n", lang)
+				return 2
+			}
+			action = target.Action
+		}
+		setActionModelOverride(&cfg, action, model)
+		dirty = true
 	}
 
 	if dirty {

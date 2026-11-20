@@ -464,3 +464,73 @@ func TestCLI_ConfigureWizardAndInteractiveInit(t *testing.T) {
 		t.Fatalf("expected config set hint in non-TTY stderr: %q", stderr.String())
 	}
 }
+
+func TestCLI_ModelsTranslateFlag(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	cfg := DefaultConfig()
+	cfg.PostProcess.TranslateLanguages = []string{"ja", "zh-cn"}
+	if err := SaveConfigFile(cfgPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	deps := cliDeps{
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		isTTY:    func() bool { return false },
+		runCmd:   func(context.Context, string, string, ...string) cmdResult { return cmdResult{} },
+		lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		getenv:   func(string) string { return "" },
+		serveFn:  func(string, string) int { return 0 },
+	}
+
+	// Set per-language translation overrides via --translate and keep --translate-en working.
+	code := runCLI("gemini-voice", []string{
+		"models", "--config", cfgPath,
+		"--translate", "ja=gemini-2.5-flash",
+		"--translate", "zh-cn=gemini-2.5-pro",
+		"--translate-en", "gemini-2.5-flash-lite",
+	}, deps)
+	if code != 0 {
+		t.Fatalf("models --translate exit=%d stderr=%s", code, stderr.String())
+	}
+
+	loaded, err := LoadConfigFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ModelForAction("translate_ja") != "gemini-2.5-flash" {
+		t.Fatalf("expected translate_ja=gemini-2.5-flash, got %q", loaded.ModelForAction("translate_ja"))
+	}
+	if loaded.ModelForAction("translate_zh_cn") != "gemini-2.5-pro" {
+		t.Fatalf("expected translate_zh_cn=gemini-2.5-pro, got %q", loaded.ModelForAction("translate_zh_cn"))
+	}
+	if loaded.ModelForAction("translate_en") != "gemini-2.5-flash-lite" {
+		t.Fatalf("expected translate_en=gemini-2.5-flash-lite, got %q", loaded.ModelForAction("translate_en"))
+	}
+
+	// Clear override with <lang>=default.
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLI("gemini-voice", []string{"models", "--config", cfgPath, "--translate", "ja=default"}, deps)
+	if code != 0 {
+		t.Fatalf("models --translate ja=default exit=%d stderr=%s", code, stderr.String())
+	}
+	loaded, err = LoadConfigFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.PostProcess.Models["translate_ja"]; ok {
+		t.Fatalf("expected translate_ja override cleared, got %+v", loaded.PostProcess.Models)
+	}
+
+	// Invalid format without '=' returns exit 2.
+	stdout.Reset()
+	stderr.Reset()
+	code = runCLI("gemini-voice", []string{"models", "--config", cfgPath, "--translate", "ja"}, deps)
+	if code != 2 {
+		t.Fatalf("expected exit 2 for invalid --translate format, got %d", code)
+	}
+}
