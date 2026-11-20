@@ -446,6 +446,9 @@ func isKnownOrConfiguredAction(cfg Config, action string) bool {
 			return true
 		}
 	}
+	if _, ok := cfg.PostProcess.Models[action]; ok {
+		return true
+	}
 	_, ok := cfg.Prompts[action]
 	return ok
 }

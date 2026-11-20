@@ -788,3 +788,52 @@ func TestCLI_ConfigSetFcitxDirtyWithAndWithoutTranslateLanguages(t *testing.T) {
 		}
 	})
 }
+
+func TestCLI_ConfiguredModelOverrideActionValidation(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	if err := SaveConfigFile(cfgPath, DefaultConfig()); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	deps := cliDeps{
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		isTTY:    func() bool { return false },
+		runCmd:   func(context.Context, string, string, ...string) cmdResult { return cmdResult{} },
+		lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		getenv:   func(string) string { return "" },
+		serveFn:  func(string, string) int { return 0 },
+	}
+
+	// Write a model override for a known language not in TranslateLanguages.
+	if code := runCLI("gemini-voice", []string{"models", "--config", cfgPath, "--translate", "ko=gemini-2.5-flash"}, deps); code != 0 {
+		t.Fatalf("models --translate ko=gemini-2.5-flash exit=%d stderr=%s", code, stderr.String())
+	}
+
+	// Reading it via config get must succeed.
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCLI("gemini-voice", []string{"config", "get", "--config", cfgPath, "model.translate_ko"}, deps); code != 0 {
+		t.Fatalf("config get model.translate_ko exit=%d stderr=%s", code, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "gemini-2.5-flash" {
+		t.Fatalf("expected gemini-2.5-flash, got %q", got)
+	}
+
+	// Clearing it via config set default must succeed.
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCLI("gemini-voice", []string{"config", "set", "--config", cfgPath, "model.translate_ko", "default"}, deps); code != 0 {
+		t.Fatalf("config set model.translate_ko default exit=%d stderr=%s", code, stderr.String())
+	}
+	loaded, err := LoadConfigFile(cfgPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := loaded.PostProcess.Models["translate_ko"]; ok {
+		t.Fatalf("expected translate_ko override cleared, got %+v", loaded.PostProcess.Models)
+	}
+}
