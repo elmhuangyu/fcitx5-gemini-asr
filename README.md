@@ -25,7 +25,7 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 # Build and run all Go and C++ tests without installing:
 ./install.sh --build-only
 
-# Install user-local addon (~/.local) + daemon/CLI (~/.local/bin) without sudo:
+# Install Fcitx5 addon to Fcitx5's default prefix (via sudo if needed) + daemon/CLI (~/.local/bin):
 ./install.sh
 ```
 
@@ -33,7 +33,7 @@ You can also use `just`:
 
 ```bash
 just check           # fmt-check + lint + build + test
-just install         # ./install.sh (user-local ~/.local)
+just install         # ./install.sh (addon to Fcitx5 prefix, daemon/CLI to ~/.local/bin)
 ```
 
 ## CLI Setup, Models & Credential Management (`gemini-voice`)
@@ -151,6 +151,8 @@ GEMINI_API_KEY="your-key" ~/.local/bin/gemini-voice-daemon
    - In **`direct`** mode (`ShowActionMenu = False`), the raw transcript is committed immediately.
 
 While recording is active, the IME captures **all** keystrokes; they are not forwarded to the focused application. This is deliberate: it keeps dictation clean and prevents stray typing from leaking into the app receiving the transcript. Press the trigger key (`Alt+space`) or `Return` (or pause for `vad_silence_ms`) to end recording and resume normal typing; `Escape` cancels it.
+
+> **Note on hotkey conflicts:** Gemini Voice listens for key events in Fcitx5's `PreInputMethod` phase, which runs after Fcitx5's global hotkey watcher. If `Alt+space` (or your configured `ime.trigger_key`) collides with a Fcitx5 global hotkey, the global hotkey takes precedence and Gemini Voice will silently fail to trigger. Change `ime.trigger_key` or the conflicting Fcitx5 global shortcut if you encounter this.
 
 ## Daemon Configuration (`~/.config/gemini-voice/config.toml`)
 
