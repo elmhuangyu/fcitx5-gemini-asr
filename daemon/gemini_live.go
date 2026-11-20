@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/url"
 	"strings"
 	"sync"
@@ -516,24 +517,31 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		vadThreshold = DefaultVADThreshold
 	}
 	vad := NewVADDetector(vadThreshold, opts.VADSilenceMs)
+	log.Printf("live session started (model=%s vad_silence_ms=%d vad_threshold=%.1f)", model, opts.VADSilenceMs, vadThreshold)
 	var (
 		sendErr      error
 		sentAudio    bool
 		vadTriggered bool
+		chunksSent   int
+		peakRMS      float64
+		stopReason   = "unknown"
 	)
 
 	for {
 		if ctx.Err() != nil {
+			log.Printf("live session cancelled (chunks=%d peak_rms=%.1f)", chunksSent, peakRMS)
 			return "", ctx.Err()
 		}
 		select {
 		case <-readerDoneCh:
+			stopReason = "ws_reader_closed"
 			goto finalize
 		default:
 		}
 
 		chunk, err := bufferedAudio.ReadChunkContext(ctx, readerDoneCh)
 		if ctx.Err() != nil {
+			log.Printf("live session cancelled (chunks=%d peak_rms=%.1f)", chunksSent, peakRMS)
 			return "", ctx.Err()
 		}
 		if len(chunk) > 0 {
@@ -547,10 +555,16 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 			}
 			if wErr := writeJSON(frame); wErr != nil {
 				sendErr = wErr
+				stopReason = "ws_write_err"
 				break
 			}
 			sentAudio = true
-			if ComputeRMS(chunk) >= vadThreshold {
+			chunksSent++
+			rms := ComputeRMS(chunk)
+			if rms > peakRMS {
+				peakRMS = rms
+			}
+			if rms >= vadThreshold {
 				textMu.Lock()
 				speechSinceLastFinal = true
 				textMu.Unlock()
@@ -561,18 +575,24 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 				// WebSocket before audioStreamEnd, matching the explicit
 				// stop (stopCh) path.
 				vadTriggered = true
+				stopReason = "vad_silence"
+				log.Printf("live session vad auto-stop (chunks=%d peak_rms=%.1f threshold=%.1f silence_ms=%d)", chunksSent, peakRMS, vadThreshold, opts.VADSilenceMs)
 				bufferedAudio.StopCapture()
 			}
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				sendErr = err
+				stopReason = "audio_err"
+			} else if stopReason == "unknown" {
+				stopReason = "stop_cmd_or_eof"
 			}
 			break
 		}
 	}
 
 finalize:
+	log.Printf("live session finalizing (reason=%s chunks=%d peak_rms=%.1f)", stopReason, chunksSent, peakRMS)
 	bufferedAudio.StopCapture()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
