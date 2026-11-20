@@ -318,6 +318,9 @@ func mergeFcitxAddonConfig(existing []byte, cfg FcitxAddonConfig) []byte {
 		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
 			if section == "TranslateLanguages" && attached {
 				attachedTransComments = append(attachedTransComments, i)
+				if transOccurrence == 0 {
+					firstTransLastContent = i
+				}
 			}
 			continue
 		}
@@ -568,10 +571,16 @@ func stripOrphanedTranslateLanguagesSection(data []byte) ([]byte, bool) {
 	}
 
 	firstHeader := headerIndices[0]
+	lastContent := enEntryIdx
+	for _, idx := range attachedCommentIdxs {
+		if idx > lastContent {
+			lastContent = idx
+		}
+	}
 	if firstHeader > 0 && strings.TrimSpace(lines[firstHeader-1].text) == "" {
 		deleteLine[firstHeader-1] = true
-	} else if enEntryIdx+1 < len(lines) && strings.TrimSpace(lines[enEntryIdx+1].text) == "" {
-		deleteLine[enEntryIdx+1] = true
+	} else if lastContent+1 < len(lines) && strings.TrimSpace(lines[lastContent+1].text) == "" {
+		deleteLine[lastContent+1] = true
 	}
 
 	var b strings.Builder
@@ -620,11 +629,13 @@ func MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath string) (bool,
 
 // SaveFcitxAddonConfig writes Fcitx5's gemini-voice.conf INI file atomically,
 // merging the managed keys into any existing content so comments, unknown
-// keys, and unknown sections survive daemon-side writes.
+// keys, and unknown sections survive daemon-side writes. A file that exists
+// but cannot be read is never overwritten with the lossy canonical render;
+// the read error is returned instead.
 func SaveFcitxAddonConfig(path string, cfg FcitxAddonConfig) error {
-	var existing []byte
-	if data, err := os.ReadFile(path); err == nil {
-		existing = data
+	existing, err := os.ReadFile(path)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("read existing fcitx config %q: %w", path, err)
 	}
 	return writeConfigFileAtomic(path, mergeFcitxAddonConfig(existing, cfg), "fcitx config")
 }

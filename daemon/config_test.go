@@ -17,6 +17,9 @@ func TestEffectiveActionNamesIncludesModelOverrides(t *testing.T) {
 		"translate_ko": "gemini-2.5-flash",
 		"translate_ja": "gemini-2.5-pro",
 	}
+	// translate_ko exists only as a prompt plus an override (not a known or
+	// configured action); it must still appear exactly once.
+	cfg.Prompts = map[string]string{"translate_ko": "Translate to Korean."}
 	names := cfg.EffectiveActionNames()
 
 	hasKo, hasJa := false, false
@@ -34,7 +37,7 @@ func TestEffectiveActionNamesIncludesModelOverrides(t *testing.T) {
 	if !hasJa {
 		t.Fatalf("expected configured target translate_ja in %v", names)
 	}
-	// No duplicates when an action is both a configured target and an override.
+	// No duplicates when an action appears in several of targets/prompts/overrides.
 	seen := make(map[string]int, len(names))
 	for _, n := range names {
 		seen[n]++

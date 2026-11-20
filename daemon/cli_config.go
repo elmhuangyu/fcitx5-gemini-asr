@@ -354,11 +354,10 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 		}
 	}
 	if fcitxDirty {
-		var existing []byte
-		if data, readErr := os.ReadFile(*fcitxPath); readErr == nil {
-			existing = data
-		} else if !errors.Is(readErr, os.ErrNotExist) {
-			_, _ = fmt.Fprintf(deps.stderr, "warning: read %q for merge: %v\n", *fcitxPath, readErr)
+		existing, readErr := os.ReadFile(*fcitxPath)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			_, _ = fmt.Fprintf(deps.stderr, "error: read existing fcitx config %q: %v\n", *fcitxPath, readErr)
+			return 1
 		}
 		fcitxData = mergeFcitxAddonConfig(existing, fcitxCfg)
 	}

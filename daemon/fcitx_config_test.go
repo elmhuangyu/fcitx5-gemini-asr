@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -294,6 +295,36 @@ func TestMigrateOrphanedFcitxTranslateLanguages_SurgicalPreservation(t *testing.
 		}
 	})
 
+	t.Run("removes blank line after trailing attached comment", func(t *testing.T) {
+		dir := t.TempDir()
+		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+		markerPath := filepath.Join(dir, "gemini-voice", ".translate_languages_migrated")
+		if err := os.MkdirAll(filepath.Dir(fcitxPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := "[TranslateLanguages]\n0=en\n# note\n\n[TriggerKey]\n0=Alt+space\n"
+		want := "[TriggerKey]\n0=Alt+space\n"
+		if err := os.WriteFile(fcitxPath, []byte(orig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		migrated, err := MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath)
+		if err != nil {
+			t.Fatalf("migrate failed: %v", err)
+		}
+		if !migrated {
+			t.Fatal("expected migrated=true")
+		}
+		got, err := os.ReadFile(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+	})
+
 	t.Run("leaves custom TranslateLanguages 0=en + 1=ja untouched byte-for-byte", func(t *testing.T) {
 		dir := t.TempDir()
 		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
@@ -397,6 +428,19 @@ func TestMergeFcitxAddonConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("drops section and blank line after trailing attached comment", func(t *testing.T) {
+		orig := "ShowActionMenu=True\nSocketPath=" + DefaultFcitxSocketPath + "\nLanguage=\nRecordingPrefix=" + DefaultRecordingPrefix + "\nPreeditMaxWidth=80\n[TranslateLanguages]\n0=en\n# note\n\n[TriggerKey]\n0=Alt+space\n"
+		cfg := DefaultFcitxAddonConfig()
+		cfg.TranslateLanguages = nil
+
+		want := "ShowActionMenu=True\nSocketPath=" + DefaultFcitxSocketPath + "\nLanguage=\nRecordingPrefix=" + DefaultRecordingPrefix + "\nPreeditMaxWidth=80\n[TriggerKey]\n0=Alt+space\n"
+
+		got := mergeFcitxAddonConfig([]byte(orig), cfg)
+		if string(got) != want {
+			t.Fatalf("merge mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+	})
+
 	t.Run("appends missing sections and fixes missing trailing newline", func(t *testing.T) {
 		orig := "# only a comment\nShowActionMenu=True"
 		cfg := DefaultFcitxAddonConfig()
@@ -426,4 +470,24 @@ func TestMergeFcitxAddonConfig(t *testing.T) {
 			t.Fatalf("expected idempotent merge:\ngot:\n%q\nwant:\n%q", string(got), string(canonical))
 		}
 	})
+}
+
+func TestSaveFcitxAddonConfigUnreadableExisting(t *testing.T) {
+	dir := t.TempDir()
+	// A directory at the config path makes ReadFile fail with a
+	// non-ErrNotExist error; the save must abort instead of overwriting.
+	confDir := filepath.Join(dir, "gemini-voice.conf")
+	if err := os.MkdirAll(confDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	err := SaveFcitxAddonConfig(confDir, DefaultFcitxAddonConfig())
+	if err == nil {
+		t.Fatal("expected error when existing fcitx config is unreadable")
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected non-ErrNotExist read error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "read existing fcitx config") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
 }

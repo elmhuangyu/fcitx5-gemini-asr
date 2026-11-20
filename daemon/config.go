@@ -400,11 +400,13 @@ func (c Config) EffectiveActionNames() []string {
 	for k := range c.Prompts {
 		if _, ok := seen[k]; !ok {
 			extra = append(extra, k)
+			seen[k] = struct{}{}
 		}
 	}
 	for k := range c.PostProcess.Models {
 		if _, ok := seen[k]; !ok {
 			extra = append(extra, k)
+			seen[k] = struct{}{}
 		}
 	}
 	sort.Strings(extra)
