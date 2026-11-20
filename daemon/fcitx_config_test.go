@@ -142,3 +142,131 @@ func TestFcitxAddonConfig_OmitEmptyTranslateLanguagesAndMigrate(t *testing.T) {
 		t.Fatalf("expected [en ja] preserved, got %#v", customLoaded.TranslateLanguages)
 	}
 }
+
+func TestMigrateOrphanedFcitxTranslateLanguages_SurgicalPreservation(t *testing.T) {
+	t.Run("preserves comments, unknown keys, key order, and line endings", func(t *testing.T) {
+		dir := t.TempDir()
+		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+		markerPath := filepath.Join(dir, "gemini-voice", ".translate_languages_migrated")
+		if err := os.MkdirAll(filepath.Dir(fcitxPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := "# top hash comment\r\n" +
+			"; top semicolon comment\r\n" +
+			"PreeditMaxWidth=64\r\n" +
+			"CustomUnknownKey=keep-me\r\n" +
+			"ShowActionMenu=False\r\n" +
+			"\r\n" +
+			"[TriggerKey]\r\n" +
+			"# trigger comment\r\n" +
+			"0=Super+v\r\n" +
+			"\r\n" +
+			"[TranslateLanguages]\r\n" +
+			"0=\"EN\"\r\n" +
+			"\r\n" +
+			"[CustomSection]\r\n" +
+			"; section comment\r\n" +
+			"Foo=Bar\r\n"
+
+		want := "# top hash comment\r\n" +
+			"; top semicolon comment\r\n" +
+			"PreeditMaxWidth=64\r\n" +
+			"CustomUnknownKey=keep-me\r\n" +
+			"ShowActionMenu=False\r\n" +
+			"\r\n" +
+			"[TriggerKey]\r\n" +
+			"# trigger comment\r\n" +
+			"0=Super+v\r\n" +
+			"\r\n" +
+			"[CustomSection]\r\n" +
+			"; section comment\r\n" +
+			"Foo=Bar\r\n"
+
+		if err := os.WriteFile(fcitxPath, []byte(orig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		migrated, err := MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath)
+		if err != nil {
+			t.Fatalf("migrate failed: %v", err)
+		}
+		if !migrated {
+			t.Fatal("expected migrated=true")
+		}
+		got, err := os.ReadFile(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("surgical migration mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+	})
+
+	t.Run("removes trailing blank line when TranslateLanguages is at start of file", func(t *testing.T) {
+		dir := t.TempDir()
+		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+		markerPath := filepath.Join(dir, "gemini-voice", ".translate_languages_migrated")
+		if err := os.MkdirAll(filepath.Dir(fcitxPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := "[TranslateLanguages]\n0=en\n\n# keep comment\n[TriggerKey]\n0=Alt+space\n"
+		want := "# keep comment\n[TriggerKey]\n0=Alt+space\n"
+		if err := os.WriteFile(fcitxPath, []byte(orig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		migrated, err := MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath)
+		if err != nil {
+			t.Fatalf("migrate failed: %v", err)
+		}
+		if !migrated {
+			t.Fatal("expected migrated=true")
+		}
+		got, err := os.ReadFile(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+	})
+
+	t.Run("leaves custom TranslateLanguages 0=en + 1=ja untouched byte-for-byte", func(t *testing.T) {
+		dir := t.TempDir()
+		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+		markerPath := filepath.Join(dir, "gemini-voice", ".translate_languages_migrated")
+		if err := os.MkdirAll(filepath.Dir(fcitxPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := "# user comment\n" +
+			"CustomKey=abc\n" +
+			"ShowActionMenu=True\n\n" +
+			"[TranslateLanguages]\n" +
+			"0=en\n" +
+			"1=ja\n"
+		if err := os.WriteFile(fcitxPath, []byte(orig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		migrated, err := MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath)
+		if err != nil {
+			t.Fatalf("migrate failed: %v", err)
+		}
+		if migrated {
+			t.Fatal("expected migrated=false")
+		}
+		got, err := os.ReadFile(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != orig {
+			t.Fatalf("expected file untouched byte-for-byte:\ngot:\n%q\nwant:\n%q", string(got), orig)
+		}
+		if _, err := os.Stat(markerPath); err != nil {
+			t.Fatalf("expected marker file created, stat err: %v", err)
+		}
+	})
+}

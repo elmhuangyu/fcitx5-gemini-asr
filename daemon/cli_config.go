@@ -317,10 +317,6 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 		_, _ = fmt.Fprintf(deps.stderr, "error: load config %q: %v\n", *configPath, err)
 		return 1
 	}
-	migratedFcitx, migErr := MigrateOrphanedFcitxTranslateLanguages(*fcitxPath, translateMigrationMarkerPath(*configPath))
-	if migErr != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "warning: migrate fcitx translate_languages: %v\n", migErr)
-	}
 	fcitxCfg, err := LoadFcitxAddonConfig(*fcitxPath)
 	if err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
@@ -333,6 +329,14 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 	if err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
 		return 1
+	}
+
+	migratedFcitx, migErr := MigrateOrphanedFcitxTranslateLanguages(*fcitxPath, translateMigrationMarkerPath(*configPath))
+	if migErr != nil {
+		_, _ = fmt.Fprintf(deps.stderr, "warning: migrate fcitx translate_languages: %v\n", migErr)
+	}
+	if fcitxDirty && migratedFcitx && key != "ime.translate_languages" {
+		fcitxCfg.TranslateLanguages = nil
 	}
 
 	// Render both configs before writing either file: with validation and

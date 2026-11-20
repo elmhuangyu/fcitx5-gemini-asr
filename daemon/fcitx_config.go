@@ -229,6 +229,107 @@ func translateMigrationMarkerPath(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), ".translate_languages_migrated")
 }
 
+type rawConfigLine struct {
+	text string // line content without trailing \r\n or \n
+	raw  string // exact line slice including trailing \r\n or \n
+}
+
+func splitRawConfigLines(s string) []rawConfigLine {
+	if s == "" {
+		return nil
+	}
+	var lines []rawConfigLine
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\n' {
+			raw := s[start : i+1]
+			text := s[start:i]
+			text = strings.TrimSuffix(text, "\r")
+			lines = append(lines, rawConfigLine{text: text, raw: raw})
+			start = i + 1
+		}
+	}
+	if start < len(s) {
+		raw := s[start:]
+		text := strings.TrimSuffix(raw, "\r")
+		lines = append(lines, rawConfigLine{text: text, raw: raw})
+	}
+	return lines
+}
+
+// stripOrphanedTranslateLanguagesSection surgically removes [TranslateLanguages]
+// when it contains solely 0=en (case-insensitive, optionally quoted), leaving all
+// comments, unknown keys, key ordering, and line endings untouched.
+func stripOrphanedTranslateLanguagesSection(data []byte) ([]byte, bool) {
+	lines := splitRawConfigLines(string(data))
+	if len(lines) == 0 {
+		return nil, false
+	}
+
+	section := ""
+	var headerIndices []int
+	enEntryIdx := -1
+	enEntryCount := 0
+	hasOtherEntry := false
+
+	for i, ln := range lines {
+		trimmed := strings.TrimSpace(ln.text)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			section = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+			if section == "TranslateLanguages" {
+				headerIndices = append(headerIndices, i)
+			}
+			continue
+		}
+		if section != "TranslateLanguages" {
+			continue
+		}
+		eq := strings.IndexByte(trimmed, '=')
+		if eq < 0 {
+			hasOtherEntry = true
+			break
+		}
+		k := strings.TrimSpace(trimmed[:eq])
+		v := unquoteFcitxValue(trimmed[eq+1:])
+		if k == "0" && strings.EqualFold(v, "en") {
+			enEntryIdx = i
+			enEntryCount++
+		} else {
+			hasOtherEntry = true
+			break
+		}
+	}
+
+	if len(headerIndices) == 0 || hasOtherEntry || enEntryCount != 1 {
+		return nil, false
+	}
+
+	deleteLine := make([]bool, len(lines))
+	for _, idx := range headerIndices {
+		deleteLine[idx] = true
+	}
+	deleteLine[enEntryIdx] = true
+
+	firstHeader := headerIndices[0]
+	if firstHeader > 0 && strings.TrimSpace(lines[firstHeader-1].text) == "" {
+		deleteLine[firstHeader-1] = true
+	} else if enEntryIdx+1 < len(lines) && strings.TrimSpace(lines[enEntryIdx+1].text) == "" {
+		deleteLine[enEntryIdx+1] = true
+	}
+
+	var b strings.Builder
+	b.Grow(len(data))
+	for i, ln := range lines {
+		if !deleteLine[i] {
+			b.WriteString(ln.raw)
+		}
+	}
+	return []byte(b.String()), true
+}
+
 // MigrateOrphanedFcitxTranslateLanguages performs a one-time migration for
 // existing users whose gemini-voice.conf has the old default [TranslateLanguages] 0=en.
 // Clearing it allows Fcitx5 to fall back to the daemon's translate_targets.
@@ -238,7 +339,8 @@ func MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath string) (bool,
 			return false, nil
 		}
 	}
-	if _, err := os.Stat(fcitxPath); err != nil {
+	data, err := os.ReadFile(fcitxPath)
+	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			if markerPath != "" {
 				_ = writeConfigFileAtomic(markerPath, []byte("1\n"), "translate migration marker")
@@ -248,15 +350,9 @@ func MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath string) (bool,
 		return false, err
 	}
 
-	cfg, err := LoadFcitxAddonConfig(fcitxPath)
-	if err != nil {
-		return false, err
-	}
-
 	migrated := false
-	if len(cfg.TranslateLanguages) == 1 && strings.EqualFold(strings.TrimSpace(cfg.TranslateLanguages[0]), "en") {
-		cfg.TranslateLanguages = nil
-		if err := SaveFcitxAddonConfig(fcitxPath, cfg); err != nil {
+	if updated, ok := stripOrphanedTranslateLanguagesSection(data); ok {
+		if err := writeConfigFileAtomic(fcitxPath, updated, "fcitx config"); err != nil {
 			return false, err
 		}
 		migrated = true

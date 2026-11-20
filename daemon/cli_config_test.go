@@ -667,3 +667,124 @@ func TestCLI_ImeTranslateLanguagesResetAndMigration(t *testing.T) {
 		}
 	}
 }
+
+func TestCLI_ConfigSetInvalidKeyDoesNotMigrate(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+	markerPath := translateMigrationMarkerPath(cfgPath)
+
+	if err := os.MkdirAll(filepath.Dir(fcitxPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	orig := "# keep comment\nShowActionMenu=True\n\n[TranslateLanguages]\n0=en\n"
+	if err := os.WriteFile(fcitxPath, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	deps := cliDeps{
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		isTTY:    func() bool { return false },
+		runCmd:   func(context.Context, string, string, ...string) cmdResult { return cmdResult{} },
+		lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		getenv:   func(string) string { return "" },
+		serveFn:  func(string, string) int { return 0 },
+	}
+
+	code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "bogus.key", "x"}, deps)
+	if code != 1 {
+		t.Fatalf("expected exit 1 for bogus.key, got %d (stderr=%s)", code, stderr.String())
+	}
+
+	got, err := os.ReadFile(fcitxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != orig {
+		t.Fatalf("expected gemini-voice.conf untouched on failed config set:\ngot:\n%s\nwant:\n%s", string(got), orig)
+	}
+	if _, err := os.Stat(markerPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no migration marker on failed config set, stat err=%v", err)
+	}
+}
+
+func TestCLI_ConfigSetFcitxDirtyWithAndWithoutTranslateLanguages(t *testing.T) {
+	t.Run("ime.trigger_key clears orphaned 0=en after migration", func(t *testing.T) {
+		dir := t.TempDir()
+		cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+
+		legacy := DefaultFcitxAddonConfig()
+		legacy.TranslateLanguages = []string{"en"}
+		if err := SaveFcitxAddonConfig(fcitxPath, legacy); err != nil {
+			t.Fatal(err)
+		}
+
+		var stdout, stderr bytes.Buffer
+		deps := cliDeps{
+			stdin:    strings.NewReader(""),
+			stdout:   &stdout,
+			stderr:   &stderr,
+			isTTY:    func() bool { return false },
+			runCmd:   func(context.Context, string, string, ...string) cmdResult { return cmdResult{} },
+			lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+			getenv:   func(string) string { return "" },
+			serveFn:  func(string, string) int { return 0 },
+		}
+
+		if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "ime.trigger_key", "Alt+a"}, deps); code != 0 {
+			t.Fatalf("config set ime.trigger_key exit=%d stderr=%s", code, stderr.String())
+		}
+		fcitxCfg, err := LoadFcitxAddonConfig(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(fcitxCfg.TriggerKeys, []string{"Alt+a"}) {
+			t.Fatalf("expected TriggerKeys=[Alt+a], got %#v", fcitxCfg.TriggerKeys)
+		}
+		if len(fcitxCfg.TranslateLanguages) != 0 {
+			t.Fatalf("expected migrated TranslateLanguages cleared, got %#v", fcitxCfg.TranslateLanguages)
+		}
+	})
+
+	t.Run("ime.translate_languages=en preserves explicit en even on first run", func(t *testing.T) {
+		dir := t.TempDir()
+		cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+
+		legacy := DefaultFcitxAddonConfig()
+		legacy.TranslateLanguages = []string{"en"}
+		if err := SaveFcitxAddonConfig(fcitxPath, legacy); err != nil {
+			t.Fatal(err)
+		}
+
+		var stdout, stderr bytes.Buffer
+		deps := cliDeps{
+			stdin:    strings.NewReader(""),
+			stdout:   &stdout,
+			stderr:   &stderr,
+			isTTY:    func() bool { return false },
+			runCmd:   func(context.Context, string, string, ...string) cmdResult { return cmdResult{} },
+			lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+			getenv:   func(string) string { return "" },
+			serveFn:  func(string, string) int { return 0 },
+		}
+
+		if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "ime.translate_languages", "en"}, deps); code != 0 {
+			t.Fatalf("config set ime.translate_languages=en exit=%d stderr=%s", code, stderr.String())
+		}
+		fcitxCfg, err := LoadFcitxAddonConfig(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(fcitxCfg.TranslateLanguages, []string{"en"}) {
+			t.Fatalf("expected explicit TranslateLanguages=[en] preserved, got %#v", fcitxCfg.TranslateLanguages)
+		}
+		if _, err := os.Stat(translateMigrationMarkerPath(cfgPath)); err != nil {
+			t.Fatalf("expected migration marker created, stat err=%v", err)
+		}
+	})
+}
