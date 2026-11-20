@@ -56,16 +56,16 @@ msgid "[Raw]"
 msgstr "[原文]"
 
 #: addon/engine.cpp:462
-msgid "[Refine ▸] Polish (Fix typos / Casual / Formal)"
-msgstr "[Refine ▸] 润色 (改错字 / 轻松 / 正式)"
+msgid "[Refine ▸] Polish (Fix typos / Casual / Formal / As Prompt)"
+msgstr "[Refine ▸] 润色 (改错字 / 轻松 / 正式 / 提示词)"
 
 #: addon/engine.cpp:470
 msgid "[Translate] Translate to English"
 msgstr "[Translate] 译为英文"
 
 #: addon/engine.cpp:478
-msgid "[As Prompt] Convert to structured prompt"
-msgstr "[As Prompt] 转为结构化提示词"
+msgid "[Ask AI] Use speech as prompt to generate response"
+msgstr "[Ask AI] 直接作为提示词让 AI 生成内容"
 
 #: addon/engine.cpp:509
 msgid "[Fix Typos] Fix typos and punctuation only, keeping spoken tone"
@@ -78,6 +78,10 @@ msgstr "[轻松语气] 自然流畅，适合即时通讯聊天"
 #: addon/engine.cpp:526
 msgid "[Formal] Clear and professional tone for email and docs"
 msgstr "[正式语气] 严谨专业，适合邮件与工作文档"
+
+#: addon/engine.cpp:534
+msgid "[As Prompt] Convert to structured prompt"
+msgstr "[As Prompt] 转为结构化提示词"
 
 #: addon/engine.cpp:537
 msgid "Refine ▸"

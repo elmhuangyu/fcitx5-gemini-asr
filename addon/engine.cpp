@@ -566,7 +566,8 @@ void GeminiVoiceEngine::showActionMenu(fcitx::InputContext *ic) {
             }
         });
     list->append<ActionCandidateWord>(
-        fcitx::Text(_("[Refine ▸] Polish (Fix typos / Casual / Formal)")),
+        fcitx::Text(
+            _("[Refine ▸] Polish (Fix typos / Casual / Formal / As Prompt)")),
         [this, alive = alive_](fcitx::InputContext *targetIc) {
             if (!alive->load()) {
                 return;
@@ -582,12 +583,12 @@ void GeminiVoiceEngine::showActionMenu(fcitx::InputContext *ic) {
             triggerPostProcess(targetIc, "translate_en");
         });
     list->append<ActionCandidateWord>(
-        fcitx::Text(_("[As Prompt] Convert to structured prompt")),
+        fcitx::Text(_("[Ask AI] Use speech as prompt to generate response")),
         [this, alive = alive_](fcitx::InputContext *targetIc) {
             if (!alive->load()) {
                 return;
             }
-            triggerPostProcess(targetIc, "as_prompt");
+            triggerPostProcess(targetIc, "ask_ai");
         });
 
     list->setGlobalCursorIndex(0);
@@ -635,6 +636,14 @@ void GeminiVoiceEngine::showRefineSubmenu(fcitx::InputContext *ic) {
                 return;
             }
             triggerPostProcess(targetIc, "refine_formal");
+        });
+    list->append<ActionCandidateWord>(
+        fcitx::Text(_("[As Prompt] Convert to structured prompt")),
+        [this, alive = alive_](fcitx::InputContext *targetIc) {
+            if (!alive->load()) {
+                return;
+            }
+            triggerPostProcess(targetIc, "as_prompt");
         });
 
     list->setGlobalCursorIndex(0);

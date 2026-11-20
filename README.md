@@ -47,7 +47,7 @@ Both `gemini-voice init` and `gemini-voice configure` launch an interactive mult
 - **Form steps**:
   1. **Input & Recognition**: action menu vs. direct commit, transcription language (`auto` or comma-separated BCP-47 tags), `VERBATIM`/`SMART` mode, and VAD silence timeout
   2. **Models**: live transcription model, default post-processing model, and whether to configure per-action overrides
-  3. **Per-Action Model Overrides** *(shown when enabled)*: model overrides for `refine_fix_typos`, `refine_casual`, `refine_formal`, `translate_en`, and `as_prompt`
+  3. **Per-Action Model Overrides** *(shown when enabled)*: model overrides for `refine_fix_typos`, `refine_casual`, `refine_formal`, `as_prompt`, `translate_en`, and `ask_ai`
   4. **Action Menu Prefetch** *(shown in `menu` mode)*: multi-select actions to prefetch when recording stops
   5. **Vocabulary, Hotkey & Network**: custom vocabulary (`custom_vocabulary`), Fcitx5 trigger key(s), and HTTP/SOCKS5 proxy
   6. **Gemini API Key** *(`init` only)*: masked password input (`systemd-creds` encryption); if a `.cred` file already exists, prompts whether to keep or overwrite it
@@ -78,7 +78,7 @@ gemini-voice configure
 gemini-voice config show
 
 # Choose whether dictation opens the action menu or commits raw text directly:
-gemini-voice config set ime.mode menu    # Show Refine / Translate / As Prompt menu (default)
+gemini-voice config set ime.mode menu    # Show Refine / Translate / Ask AI menu (default)
 gemini-voice config set ime.mode direct  # Commit raw transcript immediately
 
 # Configure Fcitx5 trigger shortcut, language, live transcription mode/vocabulary, VAD, prefetch, or proxy:
@@ -144,9 +144,9 @@ GEMINI_API_KEY="your-key" ~/.local/bin/gemini-voice-daemon
 3. Press **`Alt+space`** or **`Return`** (or pause for `vad_silence_ms`) to stop recording:
    - In **`menu`** mode (`ShowActionMenu = True`), the Rime-style action menu opens:
      - `1` / `Space` / `Return`: Commit raw transcript (`[Raw]`)
-     - `2` / `Right`: Open **Refine** submenu (`1` Fix typos, `2` Casual tone, `3` Formal tone; `Left` / `Escape` / `BackSpace` returns to Level 1)
+     - `2` / `Right`: Open **Refine** submenu (`1` Fix typos, `2` Casual tone, `3` Formal tone, `4` Convert to structured AI prompt `as_prompt`; `Left` / `Escape` / `BackSpace` returns to Level 1)
      - `3`: Translate to English (`translate_en`)
-     - `4`: Convert to structured AI prompt (`as_prompt`)
+     - `4`: Use spoken text directly as an AI prompt to generate a response (`ask_ai`)
      - `Escape`: Cancel and clear
    - In **`direct`** mode (`ShowActionMenu = False`), the raw transcript is committed immediately.
 

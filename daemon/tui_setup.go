@@ -117,7 +117,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 				Title("Input mode after dictation").
 				Description("Choose whether dictation opens the Rime-style action menu or commits directly.").
 				Options(
-					huh.NewOption("Action menu (Refine / Translate / As Prompt)", true),
+					huh.NewOption("Action menu (Refine / Translate / Ask AI)", true),
 					huh.NewOption("Direct commit (insert raw transcript immediately)", false),
 				).
 				Value(&state.showActionMenu),
@@ -161,7 +161,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 
 			huh.NewInput().
 				Title("Default post-processing model").
-				Description("Used for Refine / Translate / As Prompt unless overridden per action.").
+				Description("Used for Refine / Translate / Ask AI unless overridden per action.").
 				Suggestions([]string{DefaultPostProcessModel, "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"}).
 				Value(&state.postProcessModel).
 				Validate(validateNonEmpty("post_process.model")),

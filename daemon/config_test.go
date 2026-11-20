@@ -32,7 +32,7 @@ func TestConfigLoadSystemdTemplate(t *testing.T) {
 	if len(cfg.PostProcess.Prefetch) != 2 {
 		t.Fatalf("unexpected prefetch: %#v", cfg.PostProcess.Prefetch)
 	}
-	for _, key := range []string{"refine_fix_typos", "refine_casual", "refine_formal", "translate_en", "as_prompt"} {
+	for _, key := range []string{"refine_fix_typos", "refine_casual", "refine_formal", "as_prompt", "translate_en", "ask_ai"} {
 		if cfg.Prompts[key] == "" {
 			t.Fatalf("missing prompt %q", key)
 		}

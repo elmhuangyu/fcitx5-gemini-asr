@@ -122,7 +122,7 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	form = pressSpecial(form, tea.KeyLeft)
 	form = pressSpecial(form, tea.KeyEnter)
 
-	// Group 3: Per-Action Model Overrides (5 KnownActions).
+	// Group 3: Per-Action Model Overrides (6 KnownActions).
 	if !strings.Contains(ansi.Strip(form.View()), "Per-Action Model Overrides") {
 		t.Fatalf("expected Group 3 Per-Action Model Overrides in view:\n%s", ansi.Strip(form.View()))
 	}
@@ -131,9 +131,10 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	form = pressSpecial(form, tea.KeyDown)   // refine_casual (inherit)
 	form = typeRunes(form, "gemini-2.5-pro") // refine_formal
 	form = pressSpecial(form, tea.KeyDown)
-	form = pressSpecial(form, tea.KeyDown)   // translate_en (inherit)
 	form = typeRunes(form, "gemini-2.5-pro") // as_prompt
-	form = pressSpecial(form, tea.KeyEnter)
+	form = pressSpecial(form, tea.KeyDown)
+	form = pressSpecial(form, tea.KeyDown)  // translate_en (inherit)
+	form = pressSpecial(form, tea.KeyEnter) // ask_ai (inherit)
 
 	// Group 4: MultiSelect Prefetch (uncheck refine_formal, check as_prompt using Space).
 	if !strings.Contains(ansi.Strip(form.View()), "Prefetch actions") {
@@ -142,7 +143,6 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	form = pressSpecial(form, tea.KeyDown)
 	form = pressSpecial(form, tea.KeyDown)
 	form = pressSpecial(form, tea.KeySpace) // uncheck refine_formal
-	form = pressSpecial(form, tea.KeyDown)
 	form = pressSpecial(form, tea.KeyDown)
 	form = pressSpecial(form, tea.KeySpace) // check as_prompt
 	form = pressSpecial(form, tea.KeyEnter)

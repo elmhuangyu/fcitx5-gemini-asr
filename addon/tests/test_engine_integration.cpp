@@ -427,12 +427,12 @@ int main() {
                 return cl && cl->size() == 4;
             }));
 
-            // Right -> Level 2 Refine submenu (3 options), Left -> back to
+            // Right -> Level 2 Refine submenu (4 options), Left -> back to
             // Level 1, Right -> '3' -> refine_formal
             runOnMain(instance, [&]() {
                 sendKey(ic.get(), fcitx::Key(FcitxKey_Right));
                 auto cl = ic->inputPanel().candidateList();
-                REQUIRE(cl && cl->size() == 3);
+                REQUIRE(cl && cl->size() == 4);
                 REQUIRE(ic->inputPanel().auxUp().toString() == "Refine ▸ ");
                 REQUIRE(ic->inputPanel().clientPreedit().empty());
 
@@ -480,7 +480,7 @@ int main() {
                         "Please make this paragraph more formal.");
             });
 
-            // 5b. Digit '4' sends post_process("as_prompt")
+            // 5b. Digit '4' sends post_process("ask_ai")
             runOnMain(instance,
                       [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
             daemon.waitForCommand(cmdIdx++);
@@ -500,14 +500,51 @@ int main() {
                 auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
                     daemon.waitForCommand(cmdIdx++));
                 REQUIRE(cmd && (*cmd)["cmd"] == "post_process" &&
+                        (*cmd)["action"] == "ask_ai");
+            }
+            daemon.sendEvent(
+                R"({"event":"final_result","text":"#!/bin/bash\necho hello"})");
+            REQUIRE(waitOnMain(instance,
+                               [&]() { return ic->committed.size() == 3; }));
+            runOnMain(instance, [&]() {
+                REQUIRE(ic->committed[2] == "#!/bin/bash\necho hello");
+            });
+
+            // 5c. Refine submenu item '4' sends post_process("as_prompt")
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key("Alt+space")); });
+            daemon.waitForCommand(cmdIdx++);
+            runOnMain(instance, [&]() {
+                sendKey(ic.get(), fcitx::Key(FcitxKey_Return));
+            });
+            daemon.waitForCommand(cmdIdx++);
+            daemon.sendEvent(
+                R"({"event":"transcribe_done","raw_text":"帮我写个脚本"})");
+            REQUIRE(waitOnMain(instance, [&]() {
+                auto cl = ic->inputPanel().candidateList();
+                return cl && cl->size() == 4;
+            }));
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key(FcitxKey_2)); });
+            REQUIRE(waitOnMain(instance, [&]() {
+                auto cl = ic->inputPanel().candidateList();
+                return cl && cl->size() == 4 &&
+                       ic->inputPanel().auxUp().toString() == "Refine ▸ ";
+            }));
+            runOnMain(instance,
+                      [&]() { sendKey(ic.get(), fcitx::Key(FcitxKey_4)); });
+            {
+                auto cmd = fcitx_gemini_voice::parseFlatJsonObject(
+                    daemon.waitForCommand(cmdIdx++));
+                REQUIRE(cmd && (*cmd)["cmd"] == "post_process" &&
                         (*cmd)["action"] == "as_prompt");
             }
             daemon.sendEvent(
                 R"({"event":"final_result","text":"Prompt: Write a script..."})");
             REQUIRE(waitOnMain(instance,
-                               [&]() { return ic->committed.size() == 3; }));
+                               [&]() { return ic->committed.size() == 4; }));
             runOnMain(instance, [&]() {
-                REQUIRE(ic->committed[2] == "Prompt: Write a script...");
+                REQUIRE(ic->committed[3] == "Prompt: Write a script...");
             });
 
             // 6. Escape during RECORDING sends cancel and clears UI
@@ -573,7 +610,7 @@ int main() {
                        ic->inputPanel().overlayMessage().toString() ==
                            "Voice session ended unexpectedly";
             }));
-            runOnMain(instance, [&]() { REQUIRE(ic->committed.size() == 3); });
+            runOnMain(instance, [&]() { REQUIRE(ic->committed.size() == 4); });
 
             // A subsequent session works normally.
             runOnMain(instance,
@@ -644,9 +681,9 @@ int main() {
             daemon.sendEvent(
                 R"({"event":"transcribe_done","raw_text":"直接上屏"})");
             REQUIRE(waitOnMain(instance,
-                               [&]() { return ic->committed.size() == 4; }));
+                               [&]() { return ic->committed.size() == 5; }));
             runOnMain(instance,
-                      [&]() { REQUIRE(ic->committed[3] == "直接上屏"); });
+                      [&]() { REQUIRE(ic->committed[4] == "直接上屏"); });
 
             // 8. Unload safety: capture CandidateList before engine teardown
             runOnMain(instance, [&]() {

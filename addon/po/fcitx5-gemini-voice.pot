@@ -56,7 +56,7 @@ msgid "[Raw]"
 msgstr ""
 
 #: addon/engine.cpp:462
-msgid "[Refine ▸] Polish (Fix typos / Casual / Formal)"
+msgid "[Refine ▸] Polish (Fix typos / Casual / Formal / As Prompt)"
 msgstr ""
 
 #: addon/engine.cpp:470
@@ -64,7 +64,7 @@ msgid "[Translate] Translate to English"
 msgstr ""
 
 #: addon/engine.cpp:478
-msgid "[As Prompt] Convert to structured prompt"
+msgid "[Ask AI] Use speech as prompt to generate response"
 msgstr ""
 
 #: addon/engine.cpp:509
@@ -77,6 +77,10 @@ msgstr ""
 
 #: addon/engine.cpp:526
 msgid "[Formal] Clear and professional tone for email and docs"
+msgstr ""
+
+#: addon/engine.cpp:534
+msgid "[As Prompt] Convert to structured prompt"
 msgstr ""
 
 #: addon/engine.cpp:537

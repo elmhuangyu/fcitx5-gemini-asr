@@ -636,6 +636,7 @@ func cmdModels(args []string, deps cliDeps) int {
 	formal := fs.String("refine-formal", "", "Set model override for refine_formal (\"default\" clears)")
 	translateEn := fs.String("translate-en", "", "Set model override for translate_en (\"default\" clears)")
 	asPrompt := fs.String("as-prompt", "", "Set model override for as_prompt (\"default\" clears)")
+	askAI := fs.String("ask-ai", "", "Set model override for ask_ai (\"default\" clears)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -682,6 +683,7 @@ func cmdModels(args []string, deps cliDeps) int {
 		{"refine-formal", "refine_formal", *formal},
 		{"translate-en", "translate_en", *translateEn},
 		{"as-prompt", "as_prompt", *asPrompt},
+		{"ask-ai", "ask_ai", *askAI},
 	}
 	for _, af := range actionFlags {
 		if visited[af.flagName] {
