@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -233,6 +234,66 @@ func TestMigrateOrphanedFcitxTranslateLanguages_SurgicalPreservation(t *testing.
 		}
 	})
 
+	t.Run("removes comments attached inside the orphaned section", func(t *testing.T) {
+		dir := t.TempDir()
+		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+		markerPath := filepath.Join(dir, "gemini-voice", ".translate_languages_migrated")
+		if err := os.MkdirAll(filepath.Dir(fcitxPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := "ShowActionMenu=True\n\n[TranslateLanguages]\n# english only\n0=en\n# trailing note\n[TriggerKey]\n0=Alt+space\n"
+		want := "ShowActionMenu=True\n[TriggerKey]\n0=Alt+space\n"
+		if err := os.WriteFile(fcitxPath, []byte(orig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		migrated, err := MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath)
+		if err != nil {
+			t.Fatalf("migrate failed: %v", err)
+		}
+		if !migrated {
+			t.Fatal("expected migrated=true")
+		}
+		got, err := os.ReadFile(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+	})
+
+	t.Run("keeps comment separated from orphaned section by a blank line", func(t *testing.T) {
+		dir := t.TempDir()
+		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+		markerPath := filepath.Join(dir, "gemini-voice", ".translate_languages_migrated")
+		if err := os.MkdirAll(filepath.Dir(fcitxPath), 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		orig := "[TranslateLanguages]\n0=en\n\n# documents the next section\n[TriggerKey]\n0=Alt+space\n"
+		want := "# documents the next section\n[TriggerKey]\n0=Alt+space\n"
+		if err := os.WriteFile(fcitxPath, []byte(orig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		migrated, err := MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath)
+		if err != nil {
+			t.Fatalf("migrate failed: %v", err)
+		}
+		if !migrated {
+			t.Fatal("expected migrated=true")
+		}
+		got, err := os.ReadFile(fcitxPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+	})
+
 	t.Run("leaves custom TranslateLanguages 0=en + 1=ja untouched byte-for-byte", func(t *testing.T) {
 		dir := t.TempDir()
 		fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
@@ -267,6 +328,102 @@ func TestMigrateOrphanedFcitxTranslateLanguages_SurgicalPreservation(t *testing.
 		}
 		if _, err := os.Stat(markerPath); err != nil {
 			t.Fatalf("expected marker file created, stat err: %v", err)
+		}
+	})
+}
+
+func TestMergeFcitxAddonConfig(t *testing.T) {
+	t.Run("rewrites managed keys while preserving comments, unknown keys, and CRLF", func(t *testing.T) {
+		orig := "# managed by gemini-voice\r\n" +
+			"ShowActionMenu=False\r\n" +
+			"UnknownKey=keep\r\n" +
+			"\r\n" +
+			"[TriggerKey]\r\n" +
+			"# my keys\r\n" +
+			"0=Alt+space\r\n" +
+			"1=Super+v\r\n" +
+			"\r\n" +
+			"[TranslateLanguages]\r\n" +
+			"0=en\r\n" +
+			"\r\n" +
+			"[Custom]\r\n" +
+			"; custom section\r\n" +
+			"Foo=Bar\r\n"
+
+		cfg := DefaultFcitxAddonConfig()
+		cfg.TriggerKeys = []string{"Ctrl+F7"}
+		cfg.TranslateLanguages = []string{"ja", "fr"}
+		cfg.PreeditMaxWidth = 99
+
+		want := "# managed by gemini-voice\r\n" +
+			"ShowActionMenu=True\r\n" +
+			"UnknownKey=keep\r\n" +
+			"\r\n" +
+			"SocketPath=" + DefaultFcitxSocketPath + "\r\n" +
+			"Language=\r\n" +
+			"RecordingPrefix=" + DefaultRecordingPrefix + "\r\n" +
+			"PreeditMaxWidth=99\r\n" +
+			"[TriggerKey]\r\n" +
+			"0=Ctrl+F7\r\n" +
+			"# my keys\r\n" +
+			"\r\n" +
+			"[TranslateLanguages]\r\n" +
+			"0=ja\r\n" +
+			"1=fr\r\n" +
+			"\r\n" +
+			"[Custom]\r\n" +
+			"; custom section\r\n" +
+			"Foo=Bar\r\n"
+
+		got := mergeFcitxAddonConfig([]byte(orig), cfg)
+		if string(got) != want {
+			t.Fatalf("merge mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+	})
+
+	t.Run("drops TranslateLanguages section and attached comments when list empty", func(t *testing.T) {
+		orig := "ShowActionMenu=True\n\n[TranslateLanguages]\n# english only\n0=en\n[TriggerKey]\n0=Alt+space\n"
+		cfg := DefaultFcitxAddonConfig()
+		cfg.TranslateLanguages = nil
+
+		want := "ShowActionMenu=True\nSocketPath=" + DefaultFcitxSocketPath + "\nLanguage=\nRecordingPrefix=" + DefaultRecordingPrefix + "\nPreeditMaxWidth=80\n[TriggerKey]\n0=Alt+space\n"
+
+		got := mergeFcitxAddonConfig([]byte(orig), cfg)
+		if string(got) != want {
+			t.Fatalf("merge mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+		if strings.Contains(string(got), "[TranslateLanguages]") {
+			t.Fatalf("expected [TranslateLanguages] dropped, got:\n%s", got)
+		}
+	})
+
+	t.Run("appends missing sections and fixes missing trailing newline", func(t *testing.T) {
+		orig := "# only a comment\nShowActionMenu=True"
+		cfg := DefaultFcitxAddonConfig()
+		cfg.TranslateLanguages = []string{"en"}
+
+		want := "# only a comment\nShowActionMenu=True\nSocketPath=" + DefaultFcitxSocketPath + "\nLanguage=\nRecordingPrefix=" + DefaultRecordingPrefix + "\nPreeditMaxWidth=80\n\n[TriggerKey]\n0=Alt+space\n\n[TranslateLanguages]\n0=en\n"
+
+		got := mergeFcitxAddonConfig([]byte(orig), cfg)
+		if string(got) != want {
+			t.Fatalf("merge mismatch:\ngot:\n%q\nwant:\n%q", string(got), want)
+		}
+	})
+
+	t.Run("nil existing falls back to canonical render", func(t *testing.T) {
+		cfg := DefaultFcitxAddonConfig()
+		cfg.TranslateLanguages = []string{"en", "ja"}
+		if got := mergeFcitxAddonConfig(nil, cfg); !bytes.Equal(got, renderFcitxAddonConfig(cfg)) {
+			t.Fatalf("expected canonical render, got:\n%s", got)
+		}
+	})
+
+	t.Run("merge with canonical content is idempotent", func(t *testing.T) {
+		cfg := DefaultFcitxAddonConfig()
+		cfg.TranslateLanguages = []string{"en"}
+		canonical := renderFcitxAddonConfig(cfg)
+		if got := mergeFcitxAddonConfig(canonical, cfg); !bytes.Equal(got, canonical) {
+			t.Fatalf("expected idempotent merge:\ngot:\n%q\nwant:\n%q", string(got), string(canonical))
 		}
 	})
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -169,7 +170,10 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 
 	_, _ = fmt.Fprintln(w, "\nPrompts:")
 	for _, action := range cfg.EffectiveActionNames() {
-		promptText, _ := cfg.PromptForAction(action)
+		promptText, ok := cfg.PromptForAction(action)
+		if !ok {
+			continue
+		}
 		p := strings.ReplaceAll(promptText, "\n", " ")
 		_, _ = fmt.Fprintf(w, "  %-20s %s\n", action+":", truncatePreview(p, 64))
 	}
@@ -350,7 +354,13 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 		}
 	}
 	if fcitxDirty {
-		fcitxData = renderFcitxAddonConfig(fcitxCfg)
+		var existing []byte
+		if data, readErr := os.ReadFile(*fcitxPath); readErr == nil {
+			existing = data
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			_, _ = fmt.Fprintf(deps.stderr, "warning: read %q for merge: %v\n", *fcitxPath, readErr)
+		}
+		fcitxData = mergeFcitxAddonConfig(existing, fcitxCfg)
 	}
 	if err := writeConfigUpdates(*fcitxPath, fcitxData, *configPath, daemonData); err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)

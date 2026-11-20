@@ -225,6 +225,242 @@ func renderFcitxAddonConfig(cfg FcitxAddonConfig) []byte {
 	return []byte(b.String())
 }
 
+func isIntegerConfigKey(s string) bool {
+	_, err := strconv.Atoi(s)
+	return err == nil
+}
+
+func appendIndexedConfigEntries(b *strings.Builder, headerRaw string, entries []string, eol string) {
+	if !strings.HasSuffix(headerRaw, "\n") {
+		b.WriteString(eol)
+	}
+	for i, e := range entries {
+		fmt.Fprintf(b, "%d=%s", i, e)
+		b.WriteString(eol)
+	}
+}
+
+// mergeFcitxAddonConfig rewrites the daemon-managed parts of gemini-voice.conf
+// (the top-level scalar keys, [TriggerKey], and [TranslateLanguages]) into
+// existing while preserving comments, unknown keys, unknown sections, their
+// ordering, and line endings. Managed scalars are replaced in place (missing
+// ones are inserted before the first section header), managed sections have
+// their entries rewritten in place (missing sections are appended at the end),
+// and an empty TranslateLanguages list drops the section entirely. A nil
+// existing content falls back to the canonical full render.
+func mergeFcitxAddonConfig(existing []byte, cfg FcitxAddonConfig) []byte {
+	if len(existing) == 0 {
+		return renderFcitxAddonConfig(cfg)
+	}
+	lines := splitRawConfigLines(string(existing))
+
+	showMenu := "False"
+	if cfg.ShowActionMenu {
+		showMenu = "True"
+	}
+	socketPath := strings.TrimSpace(cfg.SocketPath)
+	if socketPath == "" {
+		socketPath = DefaultFcitxSocketPath
+	}
+	triggerKeys := cfg.TriggerKeys
+	if len(triggerKeys) == 0 {
+		triggerKeys = []string{"Alt+space"}
+	}
+	var triggerEntries []string
+	for _, k := range triggerKeys {
+		if trimmed := strings.TrimSpace(k); trimmed != "" {
+			triggerEntries = append(triggerEntries, quoteFcitxValue(trimmed))
+		}
+	}
+	var translateEntries []string
+	for _, l := range cfg.TranslateLanguages {
+		if trimmed := strings.TrimSpace(l); trimmed != "" {
+			translateEntries = append(translateEntries, quoteFcitxValue(trimmed))
+		}
+	}
+
+	scalarOrder := []string{"ShowActionMenu", "SocketPath", "Language", "RecordingPrefix", "PreeditMaxWidth"}
+	scalarValues := map[string]string{
+		"ShowActionMenu":  showMenu,
+		"SocketPath":      quoteFcitxValue(socketPath),
+		"Language":        quoteFcitxValue(strings.TrimSpace(cfg.Language)),
+		"RecordingPrefix": quoteFcitxValue(cfg.RecordingPrefix),
+		"PreeditMaxWidth": strconv.Itoa(cfg.PreeditMaxWidth),
+	}
+
+	fileEOL := "\n"
+	if i := strings.IndexByte(string(existing), '\n'); i > 0 && existing[i-1] == '\r' {
+		fileEOL = "\r\n"
+	}
+	dropTranslate := len(translateEntries) == 0
+
+	deleteLine := make([]bool, len(lines))
+	replaceScalar := make(map[int]string)
+	scalarSeen := make(map[string]bool)
+
+	firstHeader := -1
+	firstTrigHeader := -1
+	firstTransHeader := -1
+	transOccurrence := -1
+	firstTransLastContent := -1
+	attached := false
+	var attachedTransComments []int
+
+	section := ""
+	for i, ln := range lines {
+		trimmed := strings.TrimSpace(ln.text)
+		if trimmed == "" {
+			if section == "TranslateLanguages" {
+				attached = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			if section == "TranslateLanguages" && attached {
+				attachedTransComments = append(attachedTransComments, i)
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			name := strings.TrimSpace(trimmed[1 : len(trimmed)-1])
+			section = name
+			if firstHeader == -1 {
+				firstHeader = i
+			}
+			switch name {
+			case "TriggerKey":
+				if firstTrigHeader == -1 {
+					firstTrigHeader = i
+				} else {
+					deleteLine[i] = true
+				}
+			case "TranslateLanguages":
+				transOccurrence++
+				attached = true
+				if firstTransHeader == -1 {
+					firstTransHeader = i
+				} else {
+					deleteLine[i] = true
+				}
+				if transOccurrence == 0 {
+					firstTransLastContent = i
+				}
+			}
+			continue
+		}
+		keyPart := ""
+		if eq := strings.IndexByte(trimmed, '='); eq >= 0 {
+			keyPart = strings.TrimSpace(trimmed[:eq])
+		}
+		if keyPart == "" {
+			continue
+		}
+		if section == "" {
+			if _, managed := scalarValues[keyPart]; managed {
+				if scalarSeen[keyPart] {
+					deleteLine[i] = true
+				} else {
+					scalarSeen[keyPart] = true
+					replaceScalar[i] = keyPart
+				}
+			}
+			continue
+		}
+		switch section {
+		case "TriggerKey", "TranslateLanguages":
+			if isIntegerConfigKey(keyPart) {
+				deleteLine[i] = true
+				if section == "TranslateLanguages" && transOccurrence == 0 {
+					firstTransLastContent = i
+				}
+			}
+		}
+	}
+
+	if dropTranslate && firstTransHeader >= 0 {
+		deleteLine[firstTransHeader] = true
+		for _, idx := range attachedTransComments {
+			deleteLine[idx] = true
+		}
+		if firstTransHeader > 0 && strings.TrimSpace(lines[firstTransHeader-1].text) == "" {
+			deleteLine[firstTransHeader-1] = true
+		} else if firstTransLastContent >= 0 && firstTransLastContent+1 < len(lines) &&
+			strings.TrimSpace(lines[firstTransLastContent+1].text) == "" {
+			deleteLine[firstTransLastContent+1] = true
+		}
+	}
+
+	var b strings.Builder
+	b.Grow(len(existing) + 64)
+	pendingScalars := make([]string, 0, len(scalarOrder))
+	for _, k := range scalarOrder {
+		if !scalarSeen[k] {
+			pendingScalars = append(pendingScalars, k+"="+scalarValues[k])
+		}
+	}
+	ensureEOL := func() {
+		if s := b.String(); len(s) > 0 && s[len(s)-1] != '\n' {
+			b.WriteString(fileEOL)
+		}
+	}
+
+	for i, ln := range lines {
+		if i == firstHeader && len(pendingScalars) > 0 {
+			for _, s := range pendingScalars {
+				b.WriteString(s)
+				b.WriteString(fileEOL)
+			}
+			pendingScalars = nil
+		}
+		if deleteLine[i] {
+			continue
+		}
+		if key, ok := replaceScalar[i]; ok {
+			b.WriteString(key)
+			b.WriteByte('=')
+			b.WriteString(scalarValues[key])
+			if strings.HasSuffix(ln.raw, "\r\n") {
+				b.WriteString("\r\n")
+			} else if strings.HasSuffix(ln.raw, "\n") {
+				b.WriteByte('\n')
+			}
+		} else {
+			b.WriteString(ln.raw)
+		}
+		if i == firstTrigHeader {
+			appendIndexedConfigEntries(&b, ln.raw, triggerEntries, fileEOL)
+		}
+		if i == firstTransHeader && !dropTranslate {
+			appendIndexedConfigEntries(&b, ln.raw, translateEntries, fileEOL)
+		}
+	}
+
+	if len(pendingScalars) > 0 {
+		ensureEOL()
+		for _, s := range pendingScalars {
+			b.WriteString(s)
+			b.WriteString(fileEOL)
+		}
+	}
+	appendSection := func(header string, entries []string) {
+		ensureEOL()
+		b.WriteString(fileEOL)
+		b.WriteString(header)
+		b.WriteString(fileEOL)
+		for i, e := range entries {
+			fmt.Fprintf(&b, "%d=%s", i, e)
+			b.WriteString(fileEOL)
+		}
+	}
+	if firstTrigHeader == -1 {
+		appendSection("[TriggerKey]", triggerEntries)
+	}
+	if !dropTranslate && firstTransHeader == -1 {
+		appendSection("[TranslateLanguages]", translateEntries)
+	}
+	return []byte(b.String())
+}
+
 func translateMigrationMarkerPath(configPath string) string {
 	return filepath.Join(filepath.Dir(configPath), ".translate_languages_migrated")
 }
@@ -259,7 +495,10 @@ func splitRawConfigLines(s string) []rawConfigLine {
 
 // stripOrphanedTranslateLanguagesSection surgically removes [TranslateLanguages]
 // when it contains solely 0=en (case-insensitive, optionally quoted), leaving all
-// comments, unknown keys, key ordering, and line endings untouched.
+// comments, unknown keys, key ordering, and line endings untouched. Comments
+// attached to the section body (no blank line between them and the header or
+// the entry) are removed with the section; comments separated from the body by
+// a blank line document the following section and are kept.
 func stripOrphanedTranslateLanguagesSection(data []byte) ([]byte, bool) {
 	lines := splitRawConfigLines(string(data))
 	if len(lines) == 0 {
@@ -271,16 +510,28 @@ func stripOrphanedTranslateLanguagesSection(data []byte) ([]byte, bool) {
 	enEntryIdx := -1
 	enEntryCount := 0
 	hasOtherEntry := false
+	attached := false
+	var attachedCommentIdxs []int
 
 	for i, ln := range lines {
 		trimmed := strings.TrimSpace(ln.text)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+		if trimmed == "" {
+			if section == "TranslateLanguages" {
+				attached = false
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			if section == "TranslateLanguages" && attached {
+				attachedCommentIdxs = append(attachedCommentIdxs, i)
+			}
 			continue
 		}
 		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
 			section = strings.TrimSpace(trimmed[1 : len(trimmed)-1])
 			if section == "TranslateLanguages" {
 				headerIndices = append(headerIndices, i)
+				attached = true
 			}
 			continue
 		}
@@ -312,6 +563,9 @@ func stripOrphanedTranslateLanguagesSection(data []byte) ([]byte, bool) {
 		deleteLine[idx] = true
 	}
 	deleteLine[enEntryIdx] = true
+	for _, idx := range attachedCommentIdxs {
+		deleteLine[idx] = true
+	}
 
 	firstHeader := headerIndices[0]
 	if firstHeader > 0 && strings.TrimSpace(lines[firstHeader-1].text) == "" {
@@ -364,9 +618,15 @@ func MigrateOrphanedFcitxTranslateLanguages(fcitxPath, markerPath string) (bool,
 	return migrated, nil
 }
 
-// SaveFcitxAddonConfig writes Fcitx5's gemini-voice.conf INI file atomically.
+// SaveFcitxAddonConfig writes Fcitx5's gemini-voice.conf INI file atomically,
+// merging the managed keys into any existing content so comments, unknown
+// keys, and unknown sections survive daemon-side writes.
 func SaveFcitxAddonConfig(path string, cfg FcitxAddonConfig) error {
-	return writeConfigFileAtomic(path, renderFcitxAddonConfig(cfg), "fcitx config")
+	var existing []byte
+	if data, err := os.ReadFile(path); err == nil {
+		existing = data
+	}
+	return writeConfigFileAtomic(path, mergeFcitxAddonConfig(existing, cfg), "fcitx config")
 }
 
 // ReloadFcitx5Config triggers a best-effort config reload in a running fcitx5 instance.

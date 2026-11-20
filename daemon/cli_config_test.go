@@ -789,6 +789,60 @@ func TestCLI_ConfigSetFcitxDirtyWithAndWithoutTranslateLanguages(t *testing.T) {
 	})
 }
 
+func TestCLI_ConfigSetImePreservesHandEdits(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	fcitxPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+	if err := os.MkdirAll(filepath.Dir(fcitxPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	orig := "# hand-edited header\n" +
+		"ShowActionMenu=True\n" +
+		"UnknownFutureKey=42\n" +
+		"\n[TriggerKey]\n0=Alt+space\n"
+	if err := os.WriteFile(fcitxPath, []byte(orig), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	deps := cliDeps{
+		stdin:    strings.NewReader(""),
+		stdout:   &stdout,
+		stderr:   &stderr,
+		isTTY:    func() bool { return false },
+		runCmd:   func(context.Context, string, string, ...string) cmdResult { return cmdResult{} },
+		lookPath: func(string) (string, error) { return "", os.ErrNotExist },
+		getenv:   func(string) string { return "" },
+		serveFn:  func(string, string) int { return 0 },
+	}
+
+	if code := runCLI("gemini-voice", []string{"config", "set", "-config", cfgPath, "-fcitx-config", fcitxPath, "ime.trigger_key", "Ctrl+F7"}, deps); code != 0 {
+		t.Fatalf("config set ime.trigger_key exit=%d stderr=%s", code, stderr.String())
+	}
+
+	got, err := os.ReadFile(fcitxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"# hand-edited header", "UnknownFutureKey=42", "0=Ctrl+F7"} {
+		if !strings.Contains(string(got), want) {
+			t.Fatalf("expected %q preserved in gemini-voice.conf, got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(string(got), "0=Alt+space") {
+		t.Fatalf("expected old trigger key replaced, got:\n%s", got)
+	}
+
+	fcitxCfg, err := LoadFcitxAddonConfig(fcitxPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(fcitxCfg.TriggerKeys, []string{"Ctrl+F7"}) {
+		t.Fatalf("expected TriggerKeys=[Ctrl+F7], got %#v", fcitxCfg.TriggerKeys)
+	}
+}
+
 func TestCLI_ConfiguredModelOverrideActionValidation(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
@@ -812,6 +866,10 @@ func TestCLI_ConfiguredModelOverrideActionValidation(t *testing.T) {
 	if code := runCLI("gemini-voice", []string{"models", "--config", cfgPath, "--translate", "ko=gemini-2.5-flash"}, deps); code != 0 {
 		t.Fatalf("models --translate ko=gemini-2.5-flash exit=%d stderr=%s", code, stderr.String())
 	}
+	// The models table lists the models-only override.
+	if !strings.Contains(stdout.String(), "model.translate_ko:") || !strings.Contains(stdout.String(), "gemini-2.5-flash (override)") {
+		t.Fatalf("expected models table to list model.translate_ko, got:\n%s", stdout.String())
+	}
 
 	// Reading it via config get must succeed.
 	stdout.Reset()
@@ -821,6 +879,16 @@ func TestCLI_ConfiguredModelOverrideActionValidation(t *testing.T) {
 	}
 	if got := strings.TrimSpace(stdout.String()); got != "gemini-2.5-flash" {
 		t.Fatalf("expected gemini-2.5-flash, got %q", got)
+	}
+
+	// config show also lists the override alongside configured actions.
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCLI("gemini-voice", []string{"config", "show", "--config", cfgPath}, deps); code != 0 {
+		t.Fatalf("config show exit=%d stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "model.translate_ko:") || !strings.Contains(stdout.String(), "gemini-2.5-flash (override)") {
+		t.Fatalf("expected config show to list model.translate_ko, got:\n%s", stdout.String())
 	}
 
 	// Clearing it via config set default must succeed.
@@ -835,5 +903,15 @@ func TestCLI_ConfiguredModelOverrideActionValidation(t *testing.T) {
 	}
 	if _, ok := loaded.PostProcess.Models["translate_ko"]; ok {
 		t.Fatalf("expected translate_ko override cleared, got %+v", loaded.PostProcess.Models)
+	}
+
+	// Once cleared, the action is no longer advertised.
+	stdout.Reset()
+	stderr.Reset()
+	if code := runCLI("gemini-voice", []string{"models", "--config", cfgPath}, deps); code != 0 {
+		t.Fatalf("models exit=%d stderr=%s", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "translate_ko") {
+		t.Fatalf("expected cleared override absent from models table, got:\n%s", stdout.String())
 	}
 }

@@ -378,11 +378,11 @@ func (c Config) PromptForActionWithLabel(action, targetLabel string) (string, bo
 	return "", false
 }
 
-// EffectiveActionNames returns KnownActions (with translate_en expanded to configured TranslateTargets) followed by any extra sorted prompt keys.
+// EffectiveActionNames returns KnownActions (with translate_en expanded to configured TranslateTargets) followed by sorted extra keys from Prompts and model overrides, so actions that exist only as model overrides (e.g. translate_ko written by "models --translate ko=...") stay visible.
 func (c Config) EffectiveActionNames() []string {
 	targets := c.TranslateTargets()
-	out := make([]string, 0, len(KnownActions)+len(targets)+len(c.Prompts))
-	seen := make(map[string]struct{}, len(KnownActions)+len(targets)+len(c.Prompts))
+	out := make([]string, 0, len(KnownActions)+len(targets)+len(c.Prompts)+len(c.PostProcess.Models))
+	seen := make(map[string]struct{}, len(KnownActions)+len(targets)+len(c.Prompts)+len(c.PostProcess.Models))
 	for _, a := range KnownActions {
 		if a == "translate_en" {
 			for _, t := range targets {
@@ -398,6 +398,11 @@ func (c Config) EffectiveActionNames() []string {
 	}
 	var extra []string
 	for k := range c.Prompts {
+		if _, ok := seen[k]; !ok {
+			extra = append(extra, k)
+		}
+	}
+	for k := range c.PostProcess.Models {
 		if _, ok := seen[k]; !ok {
 			extra = append(extra, k)
 		}

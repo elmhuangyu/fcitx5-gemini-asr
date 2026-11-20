@@ -10,6 +10,42 @@ import (
 	"time"
 )
 
+func TestEffectiveActionNamesIncludesModelOverrides(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.PostProcess.TranslateLanguages = []string{"ja"}
+	cfg.PostProcess.Models = map[string]string{
+		"translate_ko": "gemini-2.5-flash",
+		"translate_ja": "gemini-2.5-pro",
+	}
+	names := cfg.EffectiveActionNames()
+
+	hasKo, hasJa := false, false
+	for _, n := range names {
+		switch n {
+		case "translate_ko":
+			hasKo = true
+		case "translate_ja":
+			hasJa = true
+		}
+	}
+	if !hasKo {
+		t.Fatalf("expected models-only override translate_ko in %v", names)
+	}
+	if !hasJa {
+		t.Fatalf("expected configured target translate_ja in %v", names)
+	}
+	// No duplicates when an action is both a configured target and an override.
+	seen := make(map[string]int, len(names))
+	for _, n := range names {
+		seen[n]++
+	}
+	for n, count := range seen {
+		if count > 1 {
+			t.Fatalf("action %q appears %d times in %v", n, count, names)
+		}
+	}
+}
+
 func TestConfigLoadSystemdTemplate(t *testing.T) {
 	cfg, err := LoadConfigFile(filepath.Join("..", "systemd", "config.toml"))
 	if err != nil {
