@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: fcitx5-gemini-voice 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-19 22:04-0500\n"
+"POT-Creation-Date: 2026-11-26 13:59-0500\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,186 +17,293 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: addon/engine.h:37
-msgid "Trigger Key"
-msgstr ""
-
-#: addon/engine.h:42
-msgid "Show LLM Action Menu"
-msgstr ""
-
-#: addon/engine.h:44
-msgid "Daemon Unix Socket Path"
-msgstr ""
-
-#: addon/engine.h:47
-msgid "Transcription Language"
-msgstr ""
-
-#: addon/engine.h:49
-msgid "Recording Prefix"
-msgstr ""
-
-#: addon/engine.h:51
-msgid "Preedit Line Wrap Width"
-msgstr ""
-
-#: addon/engine.h:56
-msgid "Translation Target Languages"
-msgstr ""
-
-#: addon/engine.cpp:335 addon/engine.cpp:964
-msgid "Gemini Voice Daemon not connected"
-msgstr ""
-
-#: addon/engine.cpp:361
-msgid "Gemini Voice Daemon disconnected"
-msgstr ""
-
-#: addon/engine.cpp:366
-msgid "[Finalizing transcript...]"
-msgstr ""
-
-#: addon/engine.cpp:814
-msgid "[Raw]"
-msgstr ""
-
-#: addon/engine.cpp:827
-msgid "[Refine ▸] Polish (Fix typos / Casual / Formal / As Prompt)"
-msgstr ""
-
-#: addon/engine.cpp:839
-msgid "[Translate] Translate to English"
-msgstr ""
-
-#: addon/engine.cpp:840
-msgid "[Translate] Translate to "
-msgstr ""
-
-#: addon/engine.cpp:852
-msgid "[Translate ▸] Translate to ..."
-msgstr ""
-
-#: addon/engine.cpp:861
-msgid "[Ask AI] Use speech as prompt to generate response"
-msgstr ""
-
-#: addon/engine.cpp:886
-msgid "[Fix Typos] Fix typos and punctuation only, keeping spoken tone"
-msgstr ""
-
-#: addon/engine.cpp:894
-msgid "[Casual] Natural and relaxed tone for chat"
-msgstr ""
-
-#: addon/engine.cpp:903
-msgid "[Formal] Clear and professional tone for email and docs"
-msgstr ""
-
-#: addon/engine.cpp:911
-msgid "[As Prompt] Convert to structured prompt"
-msgstr ""
-
-#: addon/engine.cpp:919
-msgid "Refine ▸"
-msgstr ""
-
-#: addon/engine.cpp:946
-msgid "Translate ▸"
-msgstr ""
-
-#: addon/engine.cpp:972
-msgid "[AI Processing...]"
-msgstr ""
-
-#: addon/engine.cpp:1018
+#: addon/engine_daemon.cpp:55
 msgid "No speech detected"
 msgstr ""
 
-#: addon/engine.cpp:1048
+#: addon/engine_daemon.cpp:85
 msgid "Unknown error"
 msgstr ""
 
-#: addon/engine.cpp:1051
+#: addon/engine_daemon.cpp:88
 msgid "AI processing failed: "
 msgstr ""
 
-#: addon/engine.cpp:1086
+#: addon/engine_daemon.cpp:123
 msgid "Voice session ended unexpectedly"
 msgstr ""
 
-#: addon/engine.cpp:1098 addon/engine.cpp:1104
+#: addon/engine_daemon.cpp:135 addon/engine_daemon.cpp:141
 msgid "Disconnected from Gemini Voice Daemon"
 msgstr ""
 
-#: addon/engine.h
-msgid "Live Transcription"
+#: addon/engine_keys.cpp:65 addon/engine_menus.cpp:198
+msgid "Gemini Voice Daemon not connected"
 msgstr ""
 
-#: addon/engine.h
-msgid "Post-processing"
+#: addon/engine_keys.cpp:91
+msgid "Gemini Voice Daemon disconnected"
 msgstr ""
 
-#: addon/engine.h
-msgid "Connection"
+#: addon/engine_keys.cpp:96
+msgid "[Finalizing transcript...]"
 msgstr ""
 
-#: addon/engine.h
-msgid "Live Model"
+#: addon/engine_menus.cpp:44
+msgid "[Raw]"
 msgstr ""
 
-#: addon/engine.h
-msgid "Transcription Mode"
+#: addon/engine_menus.cpp:57
+msgid "[Refine ▸] Polish (Fix typos / Casual / Formal / As Prompt)"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine_menus.cpp:69
+msgid "[Translate] Translate to English"
+msgstr ""
+
+#: addon/engine_menus.cpp:70
+msgid "[Translate] Translate to "
+msgstr ""
+
+#: addon/engine_menus.cpp:82
+msgid "[Translate ▸] Translate to ..."
+msgstr ""
+
+#: addon/engine_menus.cpp:91
+msgid "[Ask AI] Use speech as prompt to generate response"
+msgstr ""
+
+#: addon/engine_menus.cpp:118
+msgid "[Fix Typos] Fix typos and punctuation only, keeping spoken tone"
+msgstr ""
+
+#: addon/engine_menus.cpp:126
+msgid "[Casual] Natural and relaxed tone for chat"
+msgstr ""
+
+#: addon/engine_menus.cpp:135
+msgid "[Formal] Clear and professional tone for email and docs"
+msgstr ""
+
+#: addon/engine_menus.cpp:143
+msgid "[As Prompt] Convert to structured prompt"
+msgstr ""
+
+#: addon/engine_menus.cpp:151
+msgid "Refine ▸"
+msgstr ""
+
+#: addon/engine_menus.cpp:180
+msgid "Translate ▸"
+msgstr ""
+
+#: addon/engine_menus.cpp:206
+msgid "[AI Processing...]"
+msgstr ""
+
+#: addon/engine.h:40
 msgid "VERBATIM"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:40
 msgid "SMART"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:44
+msgid "Live Model"
+msgstr ""
+
+#: addon/engine.h:50
+msgid "Transcription Mode"
+msgstr ""
+
+#: addon/engine.h:56
 msgid "Custom Vocabulary"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:58
 msgid "Auto-stop Silence (ms, 0 disables)"
 msgstr ""
 
-#: addon/engine.h
-msgid "Action Name"
+#: addon/engine.h:71
+msgid "(choose an action)"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:72
+msgid "Refine: Fix typos"
+msgstr ""
+
+#: addon/engine.h:73 addon/engine.h:180
+msgid "Refine: Casual"
+msgstr ""
+
+#: addon/engine.h:74 addon/engine.h:182
+msgid "Refine: Formal"
+msgstr ""
+
+#: addon/engine.h:75 addon/engine.h:183
+msgid "As Prompt"
+msgstr ""
+
+#: addon/engine.h:76 addon/engine.h:186
+msgid "Ask AI"
+msgstr ""
+
+#: addon/engine.h:77
+msgid "Translate: English"
+msgstr ""
+
+#: addon/engine.h:78
+msgid "Translate: Chinese (Simplified)"
+msgstr ""
+
+#: addon/engine.h:79
+msgid "Translate: Chinese (Traditional)"
+msgstr ""
+
+#: addon/engine.h:80
+msgid "Translate: Japanese"
+msgstr ""
+
+#: addon/engine.h:81
+msgid "Translate: Korean"
+msgstr ""
+
+#: addon/engine.h:82
+msgid "Translate: French"
+msgstr ""
+
+#: addon/engine.h:83
+msgid "Translate: German"
+msgstr ""
+
+#: addon/engine.h:84
+msgid "Translate: Spanish"
+msgstr ""
+
+#: addon/engine.h:85
+msgid "Translate: Portuguese"
+msgstr ""
+
+#: addon/engine.h:86
+msgid "Translate: Russian"
+msgstr ""
+
+#: addon/engine.h:87
+msgid "Translate: Italian"
+msgstr ""
+
+#: addon/engine.h:88
+msgid "Translate: Arabic"
+msgstr ""
+
+#: addon/engine.h:89
+msgid "Translate: Vietnamese"
+msgstr ""
+
+#: addon/engine.h:90
+msgid "Translate: Thai"
+msgstr ""
+
+#: addon/engine.h:91
+msgid "Translate: Indonesian"
+msgstr ""
+
+#: addon/engine.h:111
+msgid "Action"
+msgstr ""
+
+#: addon/engine.h:113 addon/engine.h:157
 msgid "Prompt (empty uses built-in)"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:115
 msgid "Model (empty uses default post-process model)"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:134
+msgid "Leave empty to use the built-in prompt:"
+msgstr ""
+
+#: addon/engine.h:146
+msgid "Model (empty uses default model)"
+msgstr ""
+
+#: addon/engine.h:151
+msgid ""
+"Model name, optionally followed by a thinking effort suffix: model/low, "
+"model/medium or model/high (gemini-3 and newer). Example: gemini-3.5-flash/"
+"low."
+msgstr ""
+
+#: addon/engine.h:163
+msgid "Run when recording stops (prefetch)"
+msgstr ""
+
+#: addon/engine.h:175
 msgid "Default Model"
 msgstr ""
 
-#: addon/engine.h
-msgid "Prefetched Actions"
+#: addon/engine.h:178
+msgid "Refine: Fix Typos"
 msgstr ""
 
-#: addon/engine.h
-msgid "Action Overrides"
+#: addon/engine.h:185
+msgid "Translate (all target languages)"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:193
+msgid "Per-action Overrides (advanced; take precedence over the groups above)"
+msgstr ""
+
+#: addon/engine.h:202
 msgid "Proxy URL"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:204
 msgid "Live WebSocket URL"
 msgstr ""
 
-#: addon/engine.h
+#: addon/engine.h:206
 msgid "API Base URL"
+msgstr ""
+
+#: addon/engine.h:213
+msgid "Trigger Key"
+msgstr ""
+
+#: addon/engine.h:218
+msgid "Show LLM Action Menu"
+msgstr ""
+
+#: addon/engine.h:220
+msgid "Daemon Unix Socket Path"
+msgstr ""
+
+#: addon/engine.h:223
+msgid "Transcription Language"
+msgstr ""
+
+#: addon/engine.h:225
+msgid "Recording Prefix"
+msgstr ""
+
+#: addon/engine.h:227
+msgid "Preedit Line Wrap Width"
+msgstr ""
+
+#: addon/engine.h:230
+msgid "Translation Target Languages"
+msgstr ""
+
+#: addon/engine.h:232
+msgid "Live Transcription"
+msgstr ""
+
+#: addon/engine.h:234
+msgid "Post-processing"
+msgstr ""
+
+#: addon/engine.h:236
+msgid "Connection"
 msgstr ""

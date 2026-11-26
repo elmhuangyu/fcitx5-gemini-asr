@@ -2,7 +2,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: fcitx5-gemini-voice 0.1.0\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-11-19 22:04-0500\n"
+"POT-Creation-Date: 2026-11-26 13:59-0500\n"
 "PO-Revision-Date: 2026-11-18 00:00+0000\n"
 "Last-Translator: \n"
 "Language-Team: Chinese (Simplified)\n"
@@ -11,189 +11,310 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: addon/engine.h:37
-msgid "Trigger Key"
-msgstr "触发快捷键"
-
-#: addon/engine.h:42
-msgid "Show LLM Action Menu"
-msgstr "显示 LLM 操作菜单"
-
-#: addon/engine.h:44
-msgid "Daemon Unix Socket Path"
-msgstr "后台服务 Unix Socket 路径"
-
-#: addon/engine.h:47
-msgid "Transcription Language"
-msgstr "语音转录语言"
-
-#: addon/engine.h:49
-msgid "Recording Prefix"
-msgstr "录音状态前缀"
-
-#: addon/engine.h:51
-msgid "Preedit Line Wrap Width"
-msgstr "预编辑文本自动换行宽度"
-
-#: addon/engine.h:56
-msgid "Translation Target Languages"
-msgstr "翻译目标语言"
-
-#: addon/engine.cpp:335 addon/engine.cpp:964
-msgid "Gemini Voice Daemon not connected"
-msgstr "Gemini Voice Daemon 未连接"
-
-#: addon/engine.cpp:361
-msgid "Gemini Voice Daemon disconnected"
-msgstr "Gemini Voice Daemon 连接断开"
-
-#: addon/engine.cpp:366
-msgid "[Finalizing transcript...]"
-msgstr "[整理转录中...]"
-
-#: addon/engine.cpp:814
-msgid "[Raw]"
-msgstr "[原文]"
-
-#: addon/engine.cpp:827
-msgid "[Refine ▸] Polish (Fix typos / Casual / Formal / As Prompt)"
-msgstr "[Refine ▸] 润色 (改错字 / 轻松 / 正式 / 提示词)"
-
-#: addon/engine.cpp:839
-msgid "[Translate] Translate to English"
-msgstr "[Translate] 译为英文"
-
-#: addon/engine.cpp:840
-msgid "[Translate] Translate to "
-msgstr "[Translate] 译为 "
-
-#: addon/engine.cpp:852
-msgid "[Translate ▸] Translate to ..."
-msgstr "[Translate ▸] 译为 ..."
-
-#: addon/engine.cpp:861
-msgid "[Ask AI] Use speech as prompt to generate response"
-msgstr "[Ask AI] 直接作为提示词让 AI 生成内容"
-
-#: addon/engine.cpp:886
-msgid "[Fix Typos] Fix typos and punctuation only, keeping spoken tone"
-msgstr "[仅改错字] 修正同音错别字与标点，保留口语原貌"
-
-#: addon/engine.cpp:894
-msgid "[Casual] Natural and relaxed tone for chat"
-msgstr "[轻松语气] 自然流畅，适合即时通讯聊天"
-
-#: addon/engine.cpp:903
-msgid "[Formal] Clear and professional tone for email and docs"
-msgstr "[正式语气] 严谨专业，适合邮件与工作文档"
-
-#: addon/engine.cpp:911
-msgid "[As Prompt] Convert to structured prompt"
-msgstr "[As Prompt] 转为结构化提示词"
-
-#: addon/engine.cpp:919
-msgid "Refine ▸"
-msgstr "Refine ▸"
-
-#: addon/engine.cpp:946
-msgid "Translate ▸"
-msgstr "Translate ▸"
-
-#: addon/engine.cpp:972
-msgid "[AI Processing...]"
-msgstr "[AI 处理中...]"
-
-#: addon/engine.cpp:1018
+#: addon/engine_daemon.cpp:55
 msgid "No speech detected"
 msgstr "未检测到语音内容"
 
-#: addon/engine.cpp:1048
+#: addon/engine_daemon.cpp:85
 msgid "Unknown error"
 msgstr "未知错误"
 
-#: addon/engine.cpp:1051
+#: addon/engine_daemon.cpp:88
 msgid "AI processing failed: "
 msgstr "AI 处理失败: "
 
-#: addon/engine.cpp:1086
+#: addon/engine_daemon.cpp:123
 msgid "Voice session ended unexpectedly"
 msgstr "语音会话已意外结束"
 
-#: addon/engine.cpp:1098 addon/engine.cpp:1104
+#: addon/engine_daemon.cpp:135 addon/engine_daemon.cpp:141
 msgid "Disconnected from Gemini Voice Daemon"
 msgstr "与 Gemini Voice Daemon 断开连接"
 
-#: addon/engine.h
-msgid "Live Transcription"
-msgstr "实时转录"
+#: addon/engine_keys.cpp:65 addon/engine_menus.cpp:198
+msgid "Gemini Voice Daemon not connected"
+msgstr "Gemini Voice Daemon 未连接"
 
-#: addon/engine.h
-msgid "Post-processing"
-msgstr "后处理"
+#: addon/engine_keys.cpp:91
+msgid "Gemini Voice Daemon disconnected"
+msgstr "Gemini Voice Daemon 连接断开"
 
-#: addon/engine.h
-msgid "Connection"
-msgstr "连接"
+#: addon/engine_keys.cpp:96
+msgid "[Finalizing transcript...]"
+msgstr "[整理转录中...]"
 
-#: addon/engine.h
+#: addon/engine_menus.cpp:44
+msgid "[Raw]"
+msgstr "[原文]"
+
+#: addon/engine_menus.cpp:57
+msgid "[Refine ▸] Polish (Fix typos / Casual / Formal / As Prompt)"
+msgstr "[Refine ▸] 润色 (改错字 / 轻松 / 正式 / 提示词)"
+
+#: addon/engine_menus.cpp:69
+msgid "[Translate] Translate to English"
+msgstr "[Translate] 译为英文"
+
+#: addon/engine_menus.cpp:70
+msgid "[Translate] Translate to "
+msgstr "[Translate] 译为 "
+
+#: addon/engine_menus.cpp:82
+msgid "[Translate ▸] Translate to ..."
+msgstr "[Translate ▸] 译为 ..."
+
+#: addon/engine_menus.cpp:91
+msgid "[Ask AI] Use speech as prompt to generate response"
+msgstr "[Ask AI] 直接作为提示词让 AI 生成内容"
+
+#: addon/engine_menus.cpp:118
+msgid "[Fix Typos] Fix typos and punctuation only, keeping spoken tone"
+msgstr "[仅改错字] 修正同音错别字与标点，保留口语原貌"
+
+#: addon/engine_menus.cpp:126
+msgid "[Casual] Natural and relaxed tone for chat"
+msgstr "[轻松语气] 自然流畅，适合即时通讯聊天"
+
+#: addon/engine_menus.cpp:135
+msgid "[Formal] Clear and professional tone for email and docs"
+msgstr "[正式语气] 严谨专业，适合邮件与工作文档"
+
+#: addon/engine_menus.cpp:143
+msgid "[As Prompt] Convert to structured prompt"
+msgstr "[As Prompt] 转为结构化提示词"
+
+#: addon/engine_menus.cpp:151
+msgid "Refine ▸"
+msgstr "Refine ▸"
+
+#: addon/engine_menus.cpp:180
+msgid "Translate ▸"
+msgstr "Translate ▸"
+
+#: addon/engine_menus.cpp:206
+msgid "[AI Processing...]"
+msgstr "[AI 处理中...]"
+
+#: addon/engine.h:40
+msgid "VERBATIM"
+msgstr "逐字"
+
+#: addon/engine.h:40
+msgid "SMART"
+msgstr "智能"
+
+#: addon/engine.h:44
 msgid "Live Model"
 msgstr "实时转录模型"
 
-#: addon/engine.h
+#: addon/engine.h:50
 msgid "Transcription Mode"
 msgstr "转录模式"
 
-#: addon/engine.h
-msgid "VERBATIM"
-msgstr ""
-
-#: addon/engine.h
-msgid "SMART"
-msgstr ""
-
-#: addon/engine.h
+#: addon/engine.h:56
 msgid "Custom Vocabulary"
 msgstr "自定义词汇"
 
-#: addon/engine.h
+#: addon/engine.h:58
 msgid "Auto-stop Silence (ms, 0 disables)"
 msgstr "自动停止静音时长（毫秒，0 为禁用）"
 
-#: addon/engine.h
-msgid "Action Name"
+#: addon/engine.h:71
+msgid "(choose an action)"
+msgstr "（请选择动作）"
+
+#: addon/engine.h:72
+msgid "Refine: Fix typos"
+msgstr "润色：修正错别字"
+
+#: addon/engine.h:73 addon/engine.h:180
+msgid "Refine: Casual"
+msgstr "润色：口语化"
+
+#: addon/engine.h:74 addon/engine.h:182
+msgid "Refine: Formal"
+msgstr "润色：正式"
+
+#: addon/engine.h:75 addon/engine.h:183
+msgid "As Prompt"
+msgstr "整理为提示词"
+
+#: addon/engine.h:76 addon/engine.h:186
+msgid "Ask AI"
+msgstr "询问 AI"
+
+#: addon/engine.h:77
+#, fuzzy
+msgid "Translate: English"
+msgstr "[Translate] 译为英文"
+
+#: addon/engine.h:78
+msgid "Translate: Chinese (Simplified)"
+msgstr "翻译：简体中文"
+
+#: addon/engine.h:79
+msgid "Translate: Chinese (Traditional)"
+msgstr "翻译：繁体中文"
+
+#: addon/engine.h:80
+#, fuzzy
+msgid "Translate: Japanese"
+msgstr "[Translate] 译为 "
+
+#: addon/engine.h:81
+#, fuzzy
+msgid "Translate: Korean"
+msgstr "Translate ▸"
+
+#: addon/engine.h:82
+#, fuzzy
+msgid "Translate: French"
+msgstr "Translate ▸"
+
+#: addon/engine.h:83
+#, fuzzy
+msgid "Translate: German"
+msgstr "Translate ▸"
+
+#: addon/engine.h:84
+#, fuzzy
+msgid "Translate: Spanish"
+msgstr "Translate ▸"
+
+#: addon/engine.h:85
+#, fuzzy
+msgid "Translate: Portuguese"
+msgstr "翻译目标语言"
+
+#: addon/engine.h:86
+#, fuzzy
+msgid "Translate: Russian"
+msgstr "Translate ▸"
+
+#: addon/engine.h:87
+#, fuzzy
+msgid "Translate: Italian"
+msgstr "Translate ▸"
+
+#: addon/engine.h:88
+#, fuzzy
+msgid "Translate: Arabic"
+msgstr "Translate ▸"
+
+#: addon/engine.h:89
+#, fuzzy
+msgid "Translate: Vietnamese"
+msgstr "翻译目标语言"
+
+#: addon/engine.h:90
+#, fuzzy
+msgid "Translate: Thai"
+msgstr "Translate ▸"
+
+#: addon/engine.h:91
+msgid "Translate: Indonesian"
+msgstr "翻译：印尼语"
+
+#: addon/engine.h:111
+#, fuzzy
+msgid "Action"
 msgstr "操作名称"
 
-#: addon/engine.h
+#: addon/engine.h:113 addon/engine.h:157
 msgid "Prompt (empty uses built-in)"
 msgstr "提示词（留空使用内置提示词）"
 
-#: addon/engine.h
+#: addon/engine.h:115
 msgid "Model (empty uses default post-process model)"
 msgstr "模型（留空使用默认后处理模型）"
 
-#: addon/engine.h
+#: addon/engine.h:134
+msgid "Leave empty to use the built-in prompt:"
+msgstr "留空则使用内置提示词："
+
+#: addon/engine.h:146
+#, fuzzy
+msgid "Model (empty uses default model)"
+msgstr "模型（留空使用默认后处理模型）"
+
+#: addon/engine.h:151
+msgid ""
+"Model name, optionally followed by a thinking effort suffix: model/low, "
+"model/medium or model/high (gemini-3 and newer). Example: gemini-3.5-flash/"
+"low."
+msgstr ""
+"模型名称，可附加思考强度后缀：model/low、model/medium 或 model/high"
+"（gemini-3 及更新版本）。例如：gemini-3.5-flash/low。"
+
+#: addon/engine.h:163
+msgid "Run when recording stops (prefetch)"
+msgstr "录音结束时自动运行（预取）"
+
+#: addon/engine.h:175
 msgid "Default Model"
 msgstr "默认模型"
 
-#: addon/engine.h
-msgid "Prefetched Actions"
-msgstr "预取的操作"
+#: addon/engine.h:178
+msgid "Refine: Fix Typos"
+msgstr "润色：修正错别字"
 
-#: addon/engine.h
-msgid "Action Overrides"
-msgstr "操作覆盖设置"
+#: addon/engine.h:185
+#, fuzzy
+msgid "Translate (all target languages)"
+msgstr "翻译目标语言"
 
-#: addon/engine.h
+#: addon/engine.h:193
+msgid "Per-action Overrides (advanced; take precedence over the groups above)"
+msgstr "单个动作覆盖（高级；优先于上方各分组的设置）"
+
+#: addon/engine.h:202
 msgid "Proxy URL"
 msgstr "代理地址"
 
-#: addon/engine.h
+#: addon/engine.h:204
 msgid "Live WebSocket URL"
 msgstr "实时转录 WebSocket 地址"
 
-#: addon/engine.h
+#: addon/engine.h:206
 msgid "API Base URL"
 msgstr "API 基础地址"
 
-#~ msgid "[Recording...]"
-#~ msgstr "[录音中...]"
+#: addon/engine.h:213
+msgid "Trigger Key"
+msgstr "触发快捷键"
+
+#: addon/engine.h:218
+msgid "Show LLM Action Menu"
+msgstr "显示 LLM 操作菜单"
+
+#: addon/engine.h:220
+msgid "Daemon Unix Socket Path"
+msgstr "后台服务 Unix Socket 路径"
+
+#: addon/engine.h:223
+msgid "Transcription Language"
+msgstr "语音转录语言"
+
+#: addon/engine.h:225
+msgid "Recording Prefix"
+msgstr "录音状态前缀"
+
+#: addon/engine.h:227
+msgid "Preedit Line Wrap Width"
+msgstr "预编辑文本自动换行宽度"
+
+#: addon/engine.h:230
+msgid "Translation Target Languages"
+msgstr "翻译目标语言"
+
+#: addon/engine.h:232
+msgid "Live Transcription"
+msgstr "实时转录"
+
+#: addon/engine.h:234
+msgid "Post-processing"
+msgstr "后处理"
+
+#: addon/engine.h:236
+msgid "Connection"
+msgstr "连接"
