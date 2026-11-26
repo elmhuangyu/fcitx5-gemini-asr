@@ -201,8 +201,8 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 		t.Fatalf("unexpected model overrides: %+v", cfg.PostProcess.Models)
 	}
 	wantPrefetch := []string{"refine_fix_typos", "as_prompt"}
-	if !reflect.DeepEqual(cfg.PostProcess.Prefetch, wantPrefetch) {
-		t.Fatalf("prefetch = %#v, want %#v", cfg.PostProcess.Prefetch, wantPrefetch)
+	if !reflect.DeepEqual(cfg.PrefetchActionNames(), wantPrefetch) {
+		t.Fatalf("prefetch = %#v, want %#v", cfg.PrefetchActionNames(), wantPrefetch)
 	}
 	wantVocab := []string{"Fcitx5", "PipeWire"}
 	if !reflect.DeepEqual(cfg.LiveTranscribe.CustomVocabulary, wantVocab) {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -35,9 +36,13 @@ const (
 	pathLiveVocabulary = "LiveTranscription/CustomVocabulary"
 	pathLiveVAD        = "LiveTranscription/VadSilenceMs"
 
-	pathPostModel    = "PostProcess/Model"
-	pathPostPrefetch = "PostProcess/Prefetch"
-	pathPostActions  = "PostProcess/Actions"
+	pathPostModel   = "PostProcess/Model"
+	pathPostActions = "PostProcess/Actions"
+
+	// pathLegacyPrefetch is the retired list of prefetched action names; it is
+	// converted once into the per-group Prefetch switches (see
+	// MigrateConfFile) and never written again.
+	pathLegacyPrefetch = "PostProcess/Prefetch"
 
 	pathConnProxy      = "Connection/Proxy"
 	pathConnLiveWSURL  = "Connection/LiveWsUrl"
@@ -97,6 +102,12 @@ func legacyTOMLPath() string {
 // stays next to the (retired) config.toml so the systemd unit keeps working.
 func DefaultCredentialPath() string {
 	return filepath.Join(userConfigHome(), "gemini-voice", DefaultCredentialName+".cred")
+}
+
+// groupPath is the conf path of a key of a fixed action group, e.g.
+// "PostProcess/RefineFormal/Model".
+func groupPath(group, key string) string {
+	return "PostProcess/" + groupSections[group] + "/" + key
 }
 
 func parseBoolValue(v string) bool {
@@ -160,9 +171,20 @@ func configFromINI(lines []iniLine) (Config, error) {
 	if v, ok := iniScalar(lines, pathPostModel); ok && strings.TrimSpace(v) != "" {
 		cfg.PostProcess.Model = strings.TrimSpace(v)
 	}
-	if prefetch, ok := iniList(lines, pathPostPrefetch); ok {
-		cfg.PostProcess.Prefetch = prefetch
+	for _, g := range actionGroups {
+		grp := cfg.PostProcess.Groups[g]
+		if v, ok := iniScalar(lines, groupPath(g, "Model")); ok {
+			grp.Model = strings.TrimSpace(v)
+		}
+		if v, ok := iniScalar(lines, groupPath(g, "Prompt")); ok && strings.TrimSpace(v) != "" {
+			grp.Prompt = v
+		}
+		if v, ok := iniScalar(lines, groupPath(g, "Prefetch")); ok {
+			grp.Prefetch = parseBoolValue(v)
+		}
+		cfg.PostProcess.Groups[g] = grp
 	}
+	applyLegacyPrefetch(&cfg, lines)
 	for _, item := range readStructList(lines, pathPostActions, []string{"Name", "Prompt", "Model"}) {
 		var name, prompt, model string
 		for _, f := range item {
@@ -178,6 +200,9 @@ func configFromINI(lines []iniLine) (Config, error) {
 		if name == "" {
 			continue
 		}
+		if cfg.Prompts == nil {
+			cfg.Prompts = make(map[string]string)
+		}
 		if strings.TrimSpace(prompt) != "" {
 			cfg.Prompts[name] = prompt
 		}
@@ -187,6 +212,9 @@ func configFromINI(lines []iniLine) (Config, error) {
 			}
 			cfg.PostProcess.Models[name] = model
 		}
+	}
+	if len(cfg.Prompts) == 0 {
+		cfg.Prompts = nil
 	}
 
 	if v, ok := iniScalar(lines, pathConnProxy); ok {
@@ -216,6 +244,13 @@ func validateConfig(cfg Config) error {
 	if err := ValidatePostProcessModel(cfg.PostProcess.Model); err != nil {
 		return fmt.Errorf("%s: %w", pathPostModel, err)
 	}
+	for _, g := range actionGroups {
+		if m := cfg.PostProcess.Groups[g].Model; strings.TrimSpace(m) != "" {
+			if err := ValidatePostProcessModel(m); err != nil {
+				return fmt.Errorf("%s: %w", groupPath(g, "Model"), err)
+			}
+		}
+	}
 	for action, m := range cfg.PostProcess.Models {
 		if strings.TrimSpace(m) == "" {
 			continue
@@ -225,6 +260,74 @@ func validateConfig(cfg Config) error {
 		}
 	}
 	return nil
+}
+
+// applyLegacyPrefetch converts the retired [PostProcess/Prefetch] list (action
+// names, or "Prefetch=" for none) into the per-group Prefetch switches. A
+// group that sets its own Prefetch key keeps it; any translate_* entry
+// enables the Translate group.
+func applyLegacyPrefetch(cfg *Config, lines []iniLine) {
+	list, ok := iniList(lines, pathLegacyPrefetch)
+	if !ok {
+		return
+	}
+	enabled := map[string]bool{}
+	for _, name := range list {
+		if g, ok := groupForAction(strings.TrimSpace(name)); ok {
+			enabled[g] = true
+		}
+	}
+	for _, g := range actionGroups {
+		if _, explicit := iniScalar(lines, groupPath(g, "Prefetch")); explicit {
+			continue
+		}
+		grp := cfg.PostProcess.Groups[g]
+		grp.Prefetch = enabled[g]
+		cfg.PostProcess.Groups[g] = grp
+	}
+}
+
+// removeLegacyPrefetch deletes the retired list section (or its explicit-empty
+// "Prefetch=" scalar), keeping comments and unknown keys elsewhere.
+func (d *iniDoc) removeLegacyPrefetch() {
+	d.removeScalar(pathLegacyPrefetch)
+	for {
+		hdr := firstHeader(d.lines(), pathLegacyPrefetch)
+		if hdr < 0 || !d.dropListSection(hdr) {
+			return
+		}
+	}
+}
+
+// MigrateConfFile performs the one-time conversion of a conf that still has
+// the retired [PostProcess/Prefetch] list: the list is folded into the
+// per-group Prefetch switches and removed, leaving comments and all other
+// keys untouched. It reports whether the file was rewritten; a missing file
+// or one already in the new layout is left alone.
+func MigrateConfFile(path string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("read config %q: %w", path, err)
+	}
+	lines := classifyINILines(splitINILines(string(data)))
+	if _, legacy := iniList(lines, pathLegacyPrefetch); !legacy {
+		return false, nil
+	}
+	cfg, err := configFromINI(lines)
+	if err != nil {
+		return false, fmt.Errorf("load config %q: %w", path, err)
+	}
+	merged := mergeConfig(data, cfg)
+	if bytes.Equal(merged, data) {
+		return false, nil
+	}
+	if err := writeConfigFileAtomic(path, merged, "config"); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // LoadConfigFile reads and validates gemini-voice.conf. A missing file is
@@ -266,16 +369,31 @@ func trimmedNonEmpty(in []string) []string {
 	return out
 }
 
-// actionOverrideFields renders the user's per-action overrides (prompts that
-// differ from the built-in default, and model overrides) as Actions entries,
-// in the stable order of EffectiveActionNames.
-func actionOverrideFields(cfg Config) [][]structField {
-	var items [][]structField
-	for _, name := range cfg.EffectiveActionNames() {
-		prompt := strings.TrimSpace(cfg.Prompts[name])
-		if prompt == strings.TrimSpace(defaultPrompts[name]) {
-			prompt = ""
+// existingActionNames lists the Names of the Actions entries already in the
+// file, in file order, so rewriting keeps the user's ordering.
+func existingActionNames(lines []iniLine) []string {
+	var names []string
+	for _, item := range readStructList(lines, pathPostActions, []string{"Name"}) {
+		for _, f := range item {
+			names = append(names, strings.TrimSpace(f.val))
 		}
+	}
+	return names
+}
+
+// actionOverrideFields renders the advanced per-action overrides (prompt and
+// model overrides) as Actions entries: entries already in the file keep their
+// order, new ones follow in the order of EffectiveActionNames.
+func actionOverrideFields(cfg Config, existing []string) [][]structField {
+	var items [][]structField
+	names := append(append([]string(nil), existing...), cfg.EffectiveActionNames()...)
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		prompt := strings.TrimSpace(cfg.Prompts[name])
 		model := strings.TrimSpace(cfg.PostProcess.Models[name])
 		if prompt == "" && model == "" {
 			continue
@@ -323,6 +441,17 @@ func configScalars(cfg Config, group string) []confScalar {
 		return []confScalar{
 			{path: pathPostModel, val: strings.TrimSpace(cfg.PostProcess.Model)},
 		}
+	case "groups":
+		var out []confScalar
+		for _, g := range actionGroups {
+			grp := cfg.PostProcess.Groups[g]
+			out = append(out,
+				confScalar{path: groupPath(g, "Model"), val: strings.TrimSpace(grp.Model), advanced: true},
+				confScalar{path: groupPath(g, "Prompt"), val: grp.Prompt, advanced: true},
+				confScalar{path: groupPath(g, "Prefetch"), val: formatBool(grp.Prefetch), advanced: true},
+			)
+		}
+		return out
 	default:
 		return []confScalar{
 			{path: pathConnProxy, val: strings.TrimSpace(cfg.Connection.Proxy)},
@@ -372,8 +501,9 @@ func mergeConfig(existing []byte, cfg Config) []byte {
 	scalars("live")
 	list(pathLiveVocabulary, pruneCustomVocabulary(cfg.LiveTranscribe.CustomVocabulary), nil, true)
 	scalars("post")
-	list(pathPostPrefetch, trimmedNonEmpty(cfg.PostProcess.Prefetch), def.PostProcess.Prefetch, false)
-	d.setStructList(pathPostActions, actionOverrideFields(cfg))
+	scalars("groups")
+	d.removeLegacyPrefetch()
+	d.setStructList(pathPostActions, actionOverrideFields(cfg, existingActionNames(d.lines())))
 	scalars("conn")
 	return d.bytes()
 }

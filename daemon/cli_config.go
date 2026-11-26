@@ -103,7 +103,7 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config) {
 	if strings.TrimSpace(proxyVal) == "" {
 		proxyVal = "(none)"
 	}
-	prefetchVal := strings.Join(cfg.PostProcess.Prefetch, ", ")
+	prefetchVal := strings.Join(prefetchSummary(cfg), ", ")
 	if prefetchVal == "" {
 		prefetchVal = "(none)"
 	}
@@ -162,7 +162,7 @@ func printModelTable(w io.Writer, cfg Config) {
 	_, _ = fmt.Fprintf(w, "  %-20s %s\n", "live_transcribe:", cfg.LiveTranscribe.Model)
 	_, _ = fmt.Fprintf(w, "  %-20s %s (default)\n", "post_process.model:", cfg.PostProcess.Model)
 	for _, action := range cfg.EffectiveActionNames() {
-		override := strings.TrimSpace(cfg.PostProcess.Models[action])
+		override := cfg.ActionModelOverride(action)
 		if override != "" {
 			name, effort := DescribeModelSpec(override, action)
 			_, _ = fmt.Fprintf(w, "  %-20s %s (override)  effort: %s\n", "model."+action+":", name, effort)

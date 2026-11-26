@@ -30,7 +30,8 @@ func cmdModels(args []string, deps cliDeps) int {
 	fixTypos := fs.String("refine-fix-typos", "", "Set model override for refine_fix_typos (\"default\" clears)")
 	casual := fs.String("refine-casual", "", "Set model override for refine_casual (\"default\" clears)")
 	formal := fs.String("refine-formal", "", "Set model override for refine_formal (\"default\" clears)")
-	translateEn := fs.String("translate-en", "", "Set model override for translate_en (\"default\" clears)")
+	translateEn := fs.String("translate-en", "", "Set model override for translate_en only, stored in the Actions list (\"default\" clears)")
+	translateAll := fs.String("translate-all", "", "Set the model of the Translate group, used by every translate_<lang> without its own override (\"default\" clears)")
 	var translateFlags stringSliceFlag
 	fs.Var(&translateFlags, "translate", "Set model override for a translation target as <lang>=<model>[/effort] (e.g. ja=gemini-3.5-flash/low, \"<lang>=default\" clears)")
 	asPrompt := fs.String("as-prompt", "", "Set model override for as_prompt (\"default\" clears)")
@@ -89,12 +90,13 @@ func cmdModels(args []string, deps cliDeps) int {
 		{"refine-casual", "refine_casual", *casual},
 		{"refine-formal", "refine_formal", *formal},
 		{"translate-en", "translate_en", *translateEn},
+		{"translate-all", translateGroup, *translateAll},
 		{"as-prompt", "as_prompt", *asPrompt},
 		{"ask-ai", "ask_ai", *askAI},
 	}
 	for _, af := range actionFlags {
 		if visited[af.flagName] {
-			if err := setActionModelOverride(&cfg, af.action, af.val); err != nil {
+			if err := cfg.SetActionModel(af.action, af.val); err != nil {
 				_, _ = fmt.Fprintf(deps.stderr, "error: --%s: %v\n", af.flagName, err)
 				return 1
 			}
@@ -117,7 +119,7 @@ func cmdModels(args []string, deps cliDeps) int {
 			_, _ = fmt.Fprintf(deps.stderr, "error: unknown translation target %q (use a known language like en, ja, zh-cn or configure it in post_process.translate_languages)\n", lang)
 			return 2
 		}
-		if err := setActionModelOverride(&cfg, action, model); err != nil {
+		if err := cfg.SetActionModel(action, model); err != nil {
 			_, _ = fmt.Fprintf(deps.stderr, "error: --translate %s: %v\n", lang, err)
 			return 1
 		}

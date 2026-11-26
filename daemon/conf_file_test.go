@@ -53,26 +53,53 @@ func TestGoldenFcitxConf_Parses(t *testing.T) {
 	if !reflect.DeepEqual(cfg.LiveTranscribe.CustomVocabulary, []string{"Fcitx5", "Pipe Wire"}) {
 		t.Fatalf("vocabulary = %#v", cfg.LiveTranscribe.CustomVocabulary)
 	}
-	if cfg.PostProcess.Model != "gemini-3.5-flash/low" || !reflect.DeepEqual(cfg.PostProcess.Prefetch, []string{"refine_fix_typos", "refine_formal"}) {
-		t.Fatalf("unexpected post-process config: %+v", cfg.PostProcess)
+	if cfg.PostProcess.Model != "gemini-3.5-flash/low" {
+		t.Fatalf("post_process.model = %q", cfg.PostProcess.Model)
 	}
 	wantPrompt := "Line one \"quoted\" # not a comment\n  line two with \\ backslash: 中文"
-	if got := cfg.Prompts["refine_casual"]; got != wantPrompt {
-		t.Fatalf("refine_casual prompt = %q, want %q", got, wantPrompt)
+	wantGroups := DefaultConfig().PostProcess.Groups
+	wantGroups["refine_fix_typos"] = ActionGroup{Prefetch: false}
+	wantGroups["refine_formal"] = ActionGroup{Model: "gemini-4-hydrogen/high", Prompt: wantPrompt, Prefetch: true}
+	wantGroups[translateGroup] = ActionGroup{Model: "gemini-3.5-flash", Prefetch: true}
+	if !reflect.DeepEqual(cfg.PostProcess.Groups, wantGroups) {
+		t.Fatalf("groups = %#v, want %#v", cfg.PostProcess.Groups, wantGroups)
 	}
-	if cfg.Prompts["translate_ja"] != "" {
-		t.Fatalf("empty Prompt must not override: %q", cfg.Prompts["translate_ja"])
-	}
-	wantModels := map[string]string{"refine_casual": "gemini-4-hydrogen/high", "translate_ja": "gemini-3.5-flash"}
+	// translate_pig_latin is not in the configtool dropdown; it must load as-is.
+	wantModels := map[string]string{"translate_ja": "gemini-3.5-flash/low"}
 	if !reflect.DeepEqual(cfg.PostProcess.Models, wantModels) {
 		t.Fatalf("models = %#v, want %#v", cfg.PostProcess.Models, wantModels)
+	}
+	wantPrompts := map[string]string{"translate_pig_latin": "Translate to Pig Latin."}
+	if !reflect.DeepEqual(cfg.Prompts, wantPrompts) {
+		t.Fatalf("prompts = %#v, want %#v", cfg.Prompts, wantPrompts)
 	}
 	if cfg.Connection.Proxy != "socks5://127.0.0.1:1080" || cfg.Connection.LiveWSURL != "wss://example.invalid/live" || cfg.Connection.APIBaseURL != "https://example.invalid/v1beta" {
 		t.Fatalf("unexpected connection config: %+v", cfg.Connection)
 	}
-	// Defaults for the untouched built-in prompts remain.
-	if cfg.Prompts["refine_formal"] != defaultPrompts["refine_formal"] {
-		t.Fatal("built-in prompt lost")
+
+	// Precedence: Actions entry > fixed group > post_process.model.
+	if got := cfg.ModelForAction("refine_formal"); got != "gemini-4-hydrogen/high" {
+		t.Fatalf("refine_formal model = %q", got)
+	}
+	if got := cfg.ModelForAction("translate_ja"); got != "gemini-3.5-flash/low" {
+		t.Fatalf("translate_ja model = %q (Actions entry must win over the Translate group)", got)
+	}
+	if got := cfg.ModelForAction("translate_fr"); got != "gemini-3.5-flash" {
+		t.Fatalf("translate_fr model = %q (Translate group)", got)
+	}
+	if got := cfg.ModelForAction("ask_ai"); got != "gemini-3.5-flash/low" {
+		t.Fatalf("ask_ai model = %q (post_process.model)", got)
+	}
+	if got, _ := cfg.PromptForAction("refine_formal"); got != wantPrompt {
+		t.Fatalf("refine_formal prompt = %q", got)
+	}
+	if got, _ := cfg.PromptForAction("refine_casual"); got != defaultPrompts["refine_casual"] {
+		t.Fatalf("built-in prompt lost: %q", got)
+	}
+	// Translate prefetch fans out to every configured target with its label.
+	wantItems := []PrefetchItem{{Action: "refine_formal"}, {Action: "translate_en", Label: "English"}, {Action: "translate_pig_latin", Label: "Pig Latin"}}
+	if got := cfg.PrefetchItems(); !reflect.DeepEqual(got, wantItems) {
+		t.Fatalf("prefetch items = %#v, want %#v", got, wantItems)
 	}
 }
 
@@ -109,8 +136,8 @@ func TestGoldenDefaultsMatchGoDefaults(t *testing.T) {
 
 func TestGoldenClearedPrefetchMeansNoPrefetch(t *testing.T) {
 	cfg := loadGolden(t, "gemini-voice.cleared.conf")
-	if len(cfg.PostProcess.Prefetch) != 0 {
-		t.Fatalf("expected explicitly empty prefetch, got %#v", cfg.PostProcess.Prefetch)
+	if len(cfg.PrefetchItems()) != 0 {
+		t.Fatalf("expected prefetch switched off, got %#v", cfg.PrefetchItems())
 	}
 	if cfg.LiveTranscribe.VADSilenceMs != 0 {
 		t.Fatalf("vad = %d, want 0", cfg.LiveTranscribe.VADSilenceMs)
@@ -164,10 +191,12 @@ func customConfig() Config {
 	cfg.Connection = ConnectionConfig{Proxy: "http://127.0.0.1:8080", LiveWSURL: "wss://x.invalid/live", APIBaseURL: "https://x.invalid"}
 	cfg.LiveTranscribe = LiveTranscribeConfig{Model: "gemini-3.5-transcribe-live", Mode: "SMART", CustomVocabulary: []string{"Fcitx5", "Pipe Wire"}, VADSilenceMs: 0}
 	cfg.PostProcess.Model = "gemini-3.5-flash/high"
-	cfg.PostProcess.Prefetch = []string{}
-	cfg.PostProcess.Models = map[string]string{"refine_casual": "gemini-3.5-flash", "translate_ja": "gemini-3.5-flash/low"}
-	cfg.Prompts["refine_formal"] = "Be formal.\nSecond \"line\"."
-	cfg.Prompts["translate_ja"] = "Translate to Japanese."
+	cfg.PostProcess.Groups["refine_fix_typos"] = ActionGroup{Prefetch: false}
+	cfg.PostProcess.Groups["refine_casual"] = ActionGroup{Model: "gemini-3.5-flash"}
+	cfg.PostProcess.Groups["refine_formal"] = ActionGroup{Prompt: "Be formal.\nSecond \"line\".", Prefetch: true}
+	cfg.PostProcess.Groups[translateGroup] = ActionGroup{Model: "gemini-3.5-flash/low", Prefetch: true}
+	cfg.PostProcess.Models = map[string]string{"translate_ja": "gemini-3.5-flash/high"}
+	cfg.Prompts = map[string]string{"translate_pig_latin": "Translate to Pig Latin."}
 	return cfg
 }
 
@@ -270,7 +299,6 @@ func TestFreshConfigIsCanonicalAndStable(t *testing.T) {
 		"\n[TriggerKey]\n0=Alt+space\n" +
 		"\n[LiveTranscription]\nModel=" + DefaultLiveModel + "\nMode=VERBATIM\nVadSilenceMs=1200\n" +
 		"\n[PostProcess]\nModel=" + DefaultPostProcessModel + "\n" +
-		"\n[PostProcess/Prefetch]\n0=refine_fix_typos\n1=refine_formal\n" +
 		"\n[Connection]\nProxy=\n"
 	if string(fresh) != want {
 		t.Fatalf("canonical render mismatch:\ngot:\n%s\nwant:\n%s", fresh, want)
@@ -402,87 +430,6 @@ func TestMergePreservesHandEdits(t *testing.T) {
 			t.Fatalf("got %q", got)
 		}
 	})
-
-	t.Run("prefetch cleared is stored as an explicit empty value", func(t *testing.T) {
-		cfg := DefaultConfig()
-		cfg.PostProcess.Prefetch = nil
-		got := string(mergeConfig([]byte("[PostProcess]\nModel="+DefaultPostProcessModel+"\n\n[PostProcess/Prefetch]\n0=refine_formal\n"), cfg))
-		want := "[PostProcess]\nModel=" + DefaultPostProcessModel + "\nPrefetch=\n"
-		if got != want {
-			t.Fatalf("got %q want %q", got, want)
-		}
-		back, err := configFromINI(classifyINILines(splitINILines(got)))
-		if err != nil || len(back.PostProcess.Prefetch) != 0 {
-			t.Fatalf("explicit empty prefetch not preserved: %v %#v", err, back.PostProcess.Prefetch)
-		}
-		// And restoring the default list removes the empty marker again.
-		restored := string(mergeConfig([]byte(got), DefaultConfig()))
-		if strings.Contains(restored, "Prefetch=") || !strings.Contains(restored, "[PostProcess/Prefetch]\n0=refine_fix_typos\n1=refine_formal\n") {
-			t.Fatalf("restoring defaults: %q", restored)
-		}
-	})
-}
-
-func TestMergeActionOverrides(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Prompts["refine_casual"] = "Custom casual."
-	cfg.PostProcess.Models = map[string]string{"refine_casual": "gemini-3.5-flash", "ask_ai": "gemini-4-hydrogen/high"}
-	// Overrides that equal the built-in prompt are not written.
-	cfg.Prompts["refine_formal"] = defaultPrompts["refine_formal"]
-
-	orig := "# header\nShowActionMenu=True\n\n[Custom]\nFoo=Bar\n"
-	merged := string(mergeConfig([]byte(orig), cfg))
-	want := "# header\nShowActionMenu=True\n\n[Custom]\nFoo=Bar\n" +
-		"\n[PostProcess/Actions/0]\nName=refine_casual\nPrompt=\"Custom casual.\"\nModel=gemini-3.5-flash\n" +
-		"\n[PostProcess/Actions/1]\nName=ask_ai\nModel=gemini-4-hydrogen/high\n"
-	if !strings.HasPrefix(merged, want) {
-		t.Fatalf("merged:\n%q\nwant prefix:\n%q", merged, want)
-	}
-	if strings.Contains(merged, "refine_formal") {
-		t.Fatalf("default-equal prompt written: %q", merged)
-	}
-
-	back, err := configFromINI(classifyINILines(splitINILines(merged)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if back.Prompts["refine_casual"] != "Custom casual." || back.PostProcess.Models["ask_ai"] != "gemini-4-hydrogen/high" {
-		t.Fatalf("overrides lost: %+v", back)
-	}
-
-	// Removing an override removes its section but keeps the rest in place.
-	delete(cfg.PostProcess.Models, "ask_ai")
-	cfg.Prompts["refine_casual"] = defaultPrompts["refine_casual"]
-	merged2 := string(mergeConfig([]byte(merged), cfg))
-	want2 := "# header\nShowActionMenu=True\n\n[Custom]\nFoo=Bar\n" +
-		"\n[PostProcess/Actions/0]\nName=refine_casual\nModel=gemini-3.5-flash\n"
-	if !strings.HasPrefix(merged2, want2) || strings.Contains(merged2, "ask_ai") {
-		t.Fatalf("after removal:\n%q", merged2)
-	}
-
-	// Clearing everything drops all Actions sections.
-	delete(cfg.PostProcess.Models, "refine_casual")
-	merged3 := string(mergeConfig([]byte(merged2), cfg))
-	if strings.Contains(merged3, "Actions") || !strings.Contains(merged3, "[Custom]\nFoo=Bar\n") {
-		t.Fatalf("Actions not removed:\n%q", merged3)
-	}
-
-	// Unchanged actions keep their hand-written layout and comments.
-	handwritten := "[PostProcess/Actions/0]\n# why\nName = refine_casual\nModel=gemini-3.5-flash\n"
-	cfg2 := DefaultConfig()
-	cfg2.PostProcess.Models = map[string]string{"refine_casual": "gemini-3.5-flash"}
-	if got := string(mergeConfig([]byte(handwritten), cfg2)); got != handwritten {
-		t.Fatalf("unchanged actions rewritten: %q", got)
-	}
-
-	// Entries for non-built-in names (dynamic translate_<lang>) are supported.
-	cfg3 := DefaultConfig()
-	cfg3.Ime.TranslateLanguages = []string{"ja"}
-	cfg3.PostProcess.Models = map[string]string{"translate_ja": "gemini-3.5-flash"}
-	got3 := string(mergeConfig(nil, cfg3))
-	if !strings.Contains(got3, "[PostProcess/Actions/0]\nName=translate_ja\nModel=gemini-3.5-flash\n") {
-		t.Fatalf("translate override missing:\n%s", got3)
-	}
 }
 
 func TestSaveConfigFileUnreadableExisting(t *testing.T) {

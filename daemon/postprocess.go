@@ -239,7 +239,10 @@ func NewPrefetchSession() *PrefetchSession {
 	}
 }
 
-func (s *PrefetchSession) StartPrefetch(parentCtx context.Context, rawText string, actions []string, fn PostProcessFunc) {
+// StartPrefetch starts items for rawText, replacing any earlier session. fnFor
+// supplies the post-processor for an item's translate target label ("" for
+// built-in actions).
+func (s *PrefetchSession) StartPrefetch(parentCtx context.Context, rawText string, items []PrefetchItem, fnFor func(label string) PostProcessFunc) {
 	s.mu.Lock()
 	if s.cancel != nil {
 		s.cancel()
@@ -250,39 +253,38 @@ func (s *PrefetchSession) StartPrefetch(parentCtx context.Context, rawText strin
 	s.rawText = rawText
 	s.entries = make(map[string]*prefetchEntry)
 
-	seen := make(map[string]struct{}, len(actions))
-	toRun := make([]struct {
+	type job struct {
 		action string
+		fn     PostProcessFunc
 		entry  *prefetchEntry
-	}, 0, len(actions))
+	}
+	var toRun []job
 
-	if rawText != "" && fn != nil {
-		for _, action := range actions {
-			action = strings.TrimSpace(action)
-			if action == "" {
+	if rawText != "" && fnFor != nil {
+		for _, item := range items {
+			action := strings.TrimSpace(item.Action)
+			key := prefetchKey(action, item.Label)
+			if _, dup := s.entries[key]; action == "" || dup {
 				continue
 			}
-			if _, ok := seen[action]; ok {
+			fn := fnFor(strings.TrimSpace(item.Label))
+			if fn == nil {
 				continue
 			}
-			seen[action] = struct{}{}
 			entry := &prefetchEntry{done: make(chan struct{})}
-			s.entries[prefetchKey(action, "")] = entry
-			toRun = append(toRun, struct {
-				action string
-				entry  *prefetchEntry
-			}{action: action, entry: entry})
+			s.entries[key] = entry
+			toRun = append(toRun, job{action: action, fn: fn, entry: entry})
 		}
 	}
 	s.mu.Unlock()
 
-	for _, item := range toRun {
-		go func(action string, entry *prefetchEntry) {
-			text, err := fn(ctx, action, rawText)
-			entry.text = text
-			entry.err = err
-			close(entry.done)
-		}(item.action, item.entry)
+	for _, j := range toRun {
+		go func(j job) {
+			text, err := j.fn(ctx, j.action, rawText)
+			j.entry.text = text
+			j.entry.err = err
+			close(j.entry.done)
+		}(j)
 	}
 }
 
@@ -346,8 +348,7 @@ func (s *PrefetchSession) Reset() {
 }
 
 // prefetchKey keys cache entries by action and translate target label so
-// results for different labels never share an entry. Prefetch started from
-// config uses an empty label.
+// results for different labels never share an entry.
 func prefetchKey(action, targetLabel string) string {
 	return action + "\x00" + strings.TrimSpace(targetLabel)
 }

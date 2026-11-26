@@ -75,7 +75,7 @@ func getConfigKey(cfg Config, key string) (string, error) {
 	case "post_process.model":
 		return cfg.PostProcess.Model, nil
 	case "post_process.prefetch":
-		return strings.Join(cfg.PostProcess.Prefetch, ","), nil
+		return strings.Join(prefetchSummary(cfg), ","), nil
 	case "ime.translate_languages", "post_process.translate_languages", "translate.languages":
 		if len(fcitxCfg.TranslateLanguages) == 0 {
 			return "en", nil

@@ -141,12 +141,9 @@ func setConfigKey(cfg *Config, key, val string) (imeDirty bool, err error) {
 		if listErr != nil {
 			return false, fmt.Errorf("invalid prefetch list: %w", listErr)
 		}
-		for _, a := range actions {
-			if !isKnownOrConfiguredAction(*cfg, a) {
-				return false, fmt.Errorf("unknown action %q in prefetch list", a)
-			}
+		if err := cfg.SetPrefetchActions(actions); err != nil {
+			return false, err
 		}
-		cfg.PostProcess.Prefetch = actions
 		return false, nil
 	case "ime.translate_languages", "post_process.translate_languages", "translate.languages":
 		trimmed := strings.TrimSpace(val)
@@ -170,7 +167,7 @@ func setConfigKey(cfg *Config, key, val string) (imeDirty bool, err error) {
 		if !isKnownOrConfiguredAction(*cfg, action) {
 			return false, fmt.Errorf("unknown action %q", action)
 		}
-		if err := setActionModelOverride(cfg, action, val); err != nil {
+		if err := cfg.SetActionModel(action, val); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -183,28 +180,9 @@ func setConfigKey(cfg *Config, key, val string) (imeDirty bool, err error) {
 		if trimmed == "" {
 			return false, fmt.Errorf("prompt for %q cannot be empty", action)
 		}
-		if cfg.Prompts == nil {
-			cfg.Prompts = make(map[string]string)
-		}
-		cfg.Prompts[action] = trimmed
+		cfg.SetActionPrompt(action, trimmed)
 		return false, nil
 	}
 
 	return false, fmt.Errorf("unknown config key %q", key)
-}
-
-func setActionModelOverride(cfg *Config, action, val string) error {
-	trimmed := strings.TrimSpace(val)
-	if trimmed == "" || strings.EqualFold(trimmed, "default") || trimmed == "-" {
-		delete(cfg.PostProcess.Models, action)
-		return nil
-	}
-	if err := ValidatePostProcessModel(trimmed); err != nil {
-		return err
-	}
-	if cfg.PostProcess.Models == nil {
-		cfg.PostProcess.Models = make(map[string]string)
-	}
-	cfg.PostProcess.Models[action] = trimmed
-	return nil
 }

@@ -48,8 +48,9 @@ type Config struct {
 	Connection     ConnectionConfig
 	LiveTranscribe LiveTranscribeConfig
 	PostProcess    PostProcessConfig
-	// Prompts holds the effective prompt per action: the built-in defaults
-	// overlaid with the Actions overrides from the config file.
+	// Prompts holds the per-action prompt overrides of the advanced Actions
+	// list (empty by default). They take precedence over the group prompts in
+	// PostProcess.Groups, which take precedence over the built-in defaults.
 	Prompts map[string]string
 }
 
@@ -71,11 +72,191 @@ type TranslateTarget struct {
 	Label  string `json:"label"`
 }
 
+// ActionGroup is the settings of one fixed fcitx sub-group ([PostProcess/
+// RefineFormal] etc.): a model override, a prompt override (both empty inherit)
+// and whether the action runs when recording stops.
+type ActionGroup struct {
+	Model    string
+	Prompt   string
+	Prefetch bool
+}
+
+// translateGroup is the group id covering every translate_<lang> action.
+const translateGroup = "translate"
+
+// actionGroups lists the fixed group ids in display order; every id except
+// translateGroup is also the name of its single action.
+var actionGroups = []string{
+	"refine_fix_typos",
+	"refine_casual",
+	"refine_formal",
+	"as_prompt",
+	translateGroup,
+	"ask_ai",
+}
+
+// groupSections maps a group id to its section name under [PostProcess] in
+// gemini-voice.conf (mirroring addon/engine.h).
+var groupSections = map[string]string{
+	"refine_fix_typos": "RefineFixTypos",
+	"refine_casual":    "RefineCasual",
+	"refine_formal":    "RefineFormal",
+	"as_prompt":        "AsPrompt",
+	translateGroup:     "Translate",
+	"ask_ai":           "AskAi",
+}
+
+// defaultPrefetchGroups are the groups whose Prefetch defaults to true.
+var defaultPrefetchGroups = map[string]bool{"refine_fix_typos": true, "refine_formal": true}
+
+// groupForAction returns the fixed group id an action belongs to, if any.
+func groupForAction(action string) (string, bool) {
+	if action == translateGroup || strings.HasPrefix(action, "translate_") {
+		return translateGroup, true
+	}
+	for _, g := range actionGroups {
+		if g == action {
+			return g, true
+		}
+	}
+	return "", false
+}
+
 type PostProcessConfig struct {
 	Model string
-	// Models holds per-action model overrides (empty inherits Model).
-	Models   map[string]string
-	Prefetch []string
+	// Groups holds the fixed per-action groups, keyed by group id (always
+	// populated for every id in actionGroups).
+	Groups map[string]ActionGroup
+	// Models holds the per-action model overrides of the advanced Actions
+	// list, for actions without a fixed group (e.g. translate_ja). They win
+	// over Groups and Model.
+	Models map[string]string
+}
+
+// PrefetchItem is one post-processing request started when recording stops.
+type PrefetchItem struct {
+	Action string
+	Label  string
+}
+
+// PrefetchItems resolves the groups with Prefetch enabled into the requests to
+// start: one per built-in action, and one per configured translation target
+// for the Translate group.
+func (c Config) PrefetchItems() []PrefetchItem {
+	var items []PrefetchItem
+	for _, g := range actionGroups {
+		if !c.PostProcess.Groups[g].Prefetch {
+			continue
+		}
+		if g == translateGroup {
+			for _, t := range c.TranslateTargets() {
+				items = append(items, PrefetchItem(t))
+			}
+			continue
+		}
+		items = append(items, PrefetchItem{Action: g})
+	}
+	return items
+}
+
+// isGroupAction reports whether action is exactly a fixed group's id (a
+// built-in action, or "translate" for all target languages).
+func isGroupAction(action string) bool {
+	for _, g := range actionGroups {
+		if g == action {
+			return true
+		}
+	}
+	return false
+}
+
+// SetActionModel sets (or, for "", "default" and "-", clears) the model of an
+// action. The built-in actions and "translate" (all target languages) are
+// stored in their fixed group; any other action (e.g. translate_ja) goes to
+// the advanced Actions list. Setting a group model also drops a conflicting
+// Actions-list entry so the new value is the effective one.
+func (c *Config) SetActionModel(action, val string) error {
+	trimmed := strings.TrimSpace(val)
+	cleared := trimmed == "" || strings.EqualFold(trimmed, "default") || trimmed == "-"
+	if cleared {
+		trimmed = ""
+	} else if err := ValidatePostProcessModel(trimmed); err != nil {
+		return err
+	}
+	if isGroupAction(action) {
+		grp := c.PostProcess.Groups[action]
+		grp.Model = trimmed
+		c.PostProcess.Groups[action] = grp
+		delete(c.PostProcess.Models, action)
+		return nil
+	}
+	if cleared {
+		delete(c.PostProcess.Models, action)
+		return nil
+	}
+	if c.PostProcess.Models == nil {
+		c.PostProcess.Models = make(map[string]string)
+	}
+	c.PostProcess.Models[action] = trimmed
+	return nil
+}
+
+// ActionModelOverride returns the explicitly configured model of an action
+// (Actions list first, then its fixed group), or "" when it inherits
+// post_process.model.
+func (c Config) ActionModelOverride(action string) string {
+	if m := strings.TrimSpace(c.PostProcess.Models[action]); m != "" {
+		return m
+	}
+	if g, ok := groupForAction(action); ok {
+		return strings.TrimSpace(c.PostProcess.Groups[g].Model)
+	}
+	return ""
+}
+
+// PrefetchActionNames lists the actions that run when recording stops, one
+// entry per built-in action or translate target.
+func (c Config) PrefetchActionNames() []string {
+	var out []string
+	for _, item := range c.PrefetchItems() {
+		out = append(out, item.Action)
+	}
+	return out
+}
+
+// SetPrefetchActions enables Prefetch for exactly the groups of the named
+// actions (any translate_* name, or "translate", enables the Translate
+// group, which prefetches every configured target).
+func (c *Config) SetPrefetchActions(names []string) error {
+	enabled := map[string]bool{}
+	for _, n := range names {
+		g, ok := groupForAction(strings.TrimSpace(n))
+		if !ok {
+			return fmt.Errorf("unknown action %q in prefetch list", n)
+		}
+		enabled[g] = true
+	}
+	for _, g := range actionGroups {
+		grp := c.PostProcess.Groups[g]
+		grp.Prefetch = enabled[g]
+		c.PostProcess.Groups[g] = grp
+	}
+	return nil
+}
+
+// SetActionPrompt sets the prompt of an action, routed like SetActionModel.
+func (c *Config) SetActionPrompt(action, prompt string) {
+	if isGroupAction(action) {
+		grp := c.PostProcess.Groups[action]
+		grp.Prompt = prompt
+		c.PostProcess.Groups[action] = grp
+		delete(c.Prompts, action)
+		return
+	}
+	if c.Prompts == nil {
+		c.Prompts = make(map[string]string)
+	}
+	c.Prompts[action] = prompt
 }
 
 // defaultPrompts are the built-in prompts; they live in code and are only
@@ -92,9 +273,9 @@ var defaultPrompts = map[string]string{
 const DefaultVADSilenceMs = 1200
 
 func DefaultConfig() Config {
-	prompts := make(map[string]string, len(defaultPrompts))
-	for k, v := range defaultPrompts {
-		prompts[k] = v
+	groups := make(map[string]ActionGroup, len(actionGroups))
+	for _, g := range actionGroups {
+		groups[g] = ActionGroup{Prefetch: defaultPrefetchGroups[g]}
 	}
 	return Config{
 		Ime: DefaultFcitxAddonConfig(),
@@ -104,10 +285,9 @@ func DefaultConfig() Config {
 			VADSilenceMs: DefaultVADSilenceMs,
 		},
 		PostProcess: PostProcessConfig{
-			Model:    DefaultPostProcessModel,
-			Prefetch: []string{"refine_fix_typos", "refine_formal"},
+			Model:  DefaultPostProcessModel,
+			Groups: groups,
 		},
-		Prompts: prompts,
 	}
 }
 
@@ -163,8 +343,11 @@ func (c Config) Clone() Config {
 	if c.LiveTranscribe.CustomVocabulary != nil {
 		out.LiveTranscribe.CustomVocabulary = append([]string(nil), c.LiveTranscribe.CustomVocabulary...)
 	}
-	if c.PostProcess.Prefetch != nil {
-		out.PostProcess.Prefetch = append([]string(nil), c.PostProcess.Prefetch...)
+	if c.PostProcess.Groups != nil {
+		out.PostProcess.Groups = make(map[string]ActionGroup, len(c.PostProcess.Groups))
+		for k, v := range c.PostProcess.Groups {
+			out.PostProcess.Groups[k] = v
+		}
 	}
 	if c.PostProcess.Models != nil {
 		out.PostProcess.Models = make(map[string]string, len(c.PostProcess.Models))
@@ -181,10 +364,16 @@ func (c Config) Clone() Config {
 	return out
 }
 
-// ModelForAction returns the configured model override for action, falling back to post_process.model.
+// ModelForAction resolves the model of an action: an Actions-list entry wins
+// over the action's fixed group, which wins over post_process.model.
 func (c Config) ModelForAction(action string) string {
 	if m := strings.TrimSpace(c.PostProcess.Models[action]); m != "" {
 		return m
+	}
+	if g, ok := groupForAction(action); ok {
+		if m := strings.TrimSpace(c.PostProcess.Groups[g].Model); m != "" {
+			return m
+		}
 	}
 	if m := strings.TrimSpace(c.PostProcess.Model); m != "" {
 		return m
@@ -327,7 +516,15 @@ func (c Config) PromptForAction(action string) (string, bool) {
 // synthesized translation prompt using targetLabel or known language aliases
 // when action is a translate_* key.
 func (c Config) PromptForActionWithLabel(action, targetLabel string) (string, bool) {
-	if p, ok := c.Prompts[action]; ok && strings.TrimSpace(p) != "" {
+	if p := c.Prompts[action]; strings.TrimSpace(p) != "" {
+		return p, true
+	}
+	if g, ok := groupForAction(action); ok {
+		if p := c.PostProcess.Groups[g].Prompt; strings.TrimSpace(p) != "" {
+			return p, true
+		}
+	}
+	if p, ok := defaultPrompts[action]; ok {
 		return p, true
 	}
 	for _, target := range c.TranslateTargets() {

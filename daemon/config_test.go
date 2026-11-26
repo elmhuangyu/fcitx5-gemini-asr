@@ -127,7 +127,7 @@ func TestConfigManagerHotReload_WriteAndAtomicRename(t *testing.T) {
 			t.Fatalf("unexpected direct write config: %+v", c)
 		}
 		// Built-in default prompts omitted from the conf still exist.
-		if c.Prompts["translate_en"] == "" {
+		if p, _ := c.PromptForAction("translate_en"); p == "" {
 			t.Fatal("expected omitted default prompts to remain intact")
 		}
 	case <-time.After(3 * time.Second):

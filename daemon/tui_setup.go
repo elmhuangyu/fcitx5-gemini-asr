@@ -48,7 +48,7 @@ func newSetupFormState(cfg Config, opts setupFormOptions) *setupFormState {
 	actionOrder := cfg.EffectiveActionNames()
 	overrides := make([]string, len(actionOrder))
 	for i, action := range actionOrder {
-		overrides[i] = strings.TrimSpace(cfg.PostProcess.Models[action])
+		overrides[i] = cfg.ActionModelOverride(action)
 	}
 
 	liveMode, err := NormalizeLiveMode(cfg.LiveTranscribe.Mode)
@@ -80,10 +80,10 @@ func newSetupFormState(cfg Config, opts setupFormOptions) *setupFormState {
 		vadSilenceMs:       strconv.Itoa(cfg.LiveTranscribe.VADSilenceMs),
 		liveModel:          liveModel,
 		postProcessModel:   ppModel,
-		configureOverrides: len(cfg.PostProcess.Models) > 0,
+		configureOverrides: hasModelOverrides(cfg),
 		actionOrder:        actionOrder,
 		actionOverrides:    overrides,
-		prefetch:           append([]string(nil), cfg.PostProcess.Prefetch...),
+		prefetch:           cfg.PrefetchActionNames(),
 		translateLanguages: translateLangs,
 		customVocabulary:   strings.Join(cfg.LiveTranscribe.CustomVocabulary, ", "),
 		triggerKeys:        strings.Join(fcitxCfg.TriggerKeys, ", "),
@@ -356,19 +356,22 @@ func applySetupFormState(cfg *Config, state *setupFormState) error {
 	if state.configureOverrides {
 		for i, action := range state.actionOrder {
 			if i < len(state.actionOverrides) {
-				if err := setActionModelOverride(cfg, action, state.actionOverrides[i]); err != nil {
+				if err := cfg.SetActionModel(action, state.actionOverrides[i]); err != nil {
 					return fmt.Errorf("model.%s: %w", action, err)
 				}
 			}
 		}
 	} else {
 		cfg.PostProcess.Models = nil
+		for _, g := range actionGroups {
+			grp := cfg.PostProcess.Groups[g]
+			grp.Model = ""
+			cfg.PostProcess.Groups[g] = grp
+		}
 	}
 	if state.showActionMenu {
-		if len(state.prefetch) == 0 {
-			cfg.PostProcess.Prefetch = []string{}
-		} else {
-			cfg.PostProcess.Prefetch = append([]string(nil), state.prefetch...)
+		if err := cfg.SetPrefetchActions(state.prefetch); err != nil {
+			return err
 		}
 	}
 	if _, err := setConfigKey(cfg, "live.custom_vocabulary", state.customVocabulary); err != nil {

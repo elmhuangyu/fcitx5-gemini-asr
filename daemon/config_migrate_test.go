@@ -132,14 +132,17 @@ func TestMigrateLegacyConfig_ImportsEverything(t *testing.T) {
 	if cfg.LiveTranscribe.Mode != "SMART" || cfg.LiveTranscribe.VADSilenceMs != 0 || !reflect.DeepEqual(cfg.LiveTranscribe.CustomVocabulary, []string{"Fcitx5", "Pipe Wire"}) {
 		t.Fatalf("live = %+v", cfg.LiveTranscribe)
 	}
-	if cfg.PostProcess.Model != "gemini-3.5-flash/low" || len(cfg.PostProcess.Prefetch) != 0 {
+	if cfg.PostProcess.Model != "gemini-3.5-flash/low" || len(cfg.PrefetchActionNames()) != 0 {
 		t.Fatalf("post process = %+v", cfg.PostProcess)
 	}
-	wantModels := map[string]string{"refine_casual": "gemini-4-hydrogen/high", "translate_ja": "gemini-3.5-flash"}
+	wantModels := map[string]string{"translate_ja": "gemini-3.5-flash"}
+	if cfg.PostProcess.Groups["refine_casual"].Model != "gemini-4-hydrogen/high" {
+		t.Fatalf("refine_casual group = %+v", cfg.PostProcess.Groups["refine_casual"])
+	}
 	if !reflect.DeepEqual(cfg.PostProcess.Models, wantModels) {
 		t.Fatalf("models = %#v", cfg.PostProcess.Models)
 	}
-	if cfg.Prompts["refine_formal"] != "Be formal.\nSecond \"line\"." || cfg.Prompts["translate_ja"] != "Translate to Japanese." {
+	if cfg.PostProcess.Groups["refine_formal"].Prompt != "Be formal.\nSecond \"line\"." || cfg.Prompts["translate_ja"] != "Translate to Japanese." {
 		t.Fatalf("prompts = %#v", cfg.Prompts)
 	}
 

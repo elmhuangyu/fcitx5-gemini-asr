@@ -79,7 +79,7 @@ func TestPostProcessor_GenerateAndPrefetch(t *testing.T) {
 	}
 
 	raw := "今天下午三点我们开个会讨论一下架构"
-	session.StartPrefetch(context.Background(), raw, []string{"refine_fix_typos", "refine_formal"}, fn)
+	session.StartPrefetch(context.Background(), raw, []PrefetchItem{{Action: "refine_fix_typos"}, {Action: "refine_formal"}}, func(string) PostProcessFunc { return fn })
 
 	// Immediate resolve while refine_formal is still in-flight should coalesce (no duplicate HTTP call).
 	resFormal, err := session.Resolve(context.Background(), "refine_formal", "", fn)

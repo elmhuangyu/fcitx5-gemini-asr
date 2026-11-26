@@ -117,8 +117,8 @@ func TestCLI_ConfigSetGetShow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(reloaded.PostProcess.Prefetch) != 0 {
-		t.Fatalf("expected empty prefetch after reload, got %#v", reloaded.PostProcess.Prefetch)
+	if len(reloaded.PrefetchActionNames()) != 0 {
+		t.Fatalf("expected empty prefetch after reload, got %#v", reloaded.PrefetchActionNames())
 	}
 	if len(reloaded.LiveTranscribe.CustomVocabulary) != 0 {
 		t.Fatalf("expected empty custom_vocabulary after reload, got %#v", reloaded.LiveTranscribe.CustomVocabulary)
@@ -301,8 +301,8 @@ func TestCLI_ConfigureWizardAndInteractiveInit(t *testing.T) {
 		cfg.ModelForAction("translate_en") != "gemini-2.5-flash" {
 		t.Fatalf("unexpected model routing: %+v", cfg.PostProcess)
 	}
-	if !reflect.DeepEqual(cfg.PostProcess.Prefetch, []string{"refine_fix_typos", "as_prompt"}) {
-		t.Fatalf("unexpected prefetch: %+v", cfg.PostProcess.Prefetch)
+	if !reflect.DeepEqual(cfg.PrefetchActionNames(), []string{"refine_fix_typos", "as_prompt"}) {
+		t.Fatalf("unexpected prefetch: %+v", cfg.PrefetchActionNames())
 	}
 	if cfg.Connection.Proxy != "http://127.0.0.1:7890" {
 		t.Fatalf("unexpected proxy: %q", cfg.Connection.Proxy)
@@ -630,7 +630,7 @@ func TestCLI_DaemonKeysDoNotReloadFcitx(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Prompts["ask_ai"] != "Do it." || cfg.PostProcess.Models["ask_ai"] != "gemini-3.5-flash/low" || cfg.LiveTranscribe.VADSilenceMs != 700 {
+	if cfg.PostProcess.Groups["ask_ai"].Prompt != "Do it." || cfg.PostProcess.Groups["ask_ai"].Model != "gemini-3.5-flash/low" || cfg.LiveTranscribe.VADSilenceMs != 700 {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
 }

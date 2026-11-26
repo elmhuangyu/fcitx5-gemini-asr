@@ -1044,23 +1044,28 @@ int main() {
                                           "1500");
                     rawCfg.setValueByPath("PostProcess/Model",
                                           "gemini-3.5-flash/low");
-                    rawCfg.setValueByPath("PostProcess/Prefetch/0",
-                                          "refine_fix_typos");
-                    rawCfg.setValueByPath("PostProcess/Prefetch/1",
-                                          "refine_formal");
-                    rawCfg.setValueByPath("PostProcess/Actions/0/Name",
-                                          "refine_casual");
+                    rawCfg.setValueByPath("PostProcess/RefineFixTypos/Prefetch",
+                                          "False");
+                    rawCfg.setValueByPath("PostProcess/RefineFormal/Model",
+                                          "gemini-4-hydrogen/high");
                     rawCfg.setValueByPath(
-                        "PostProcess/Actions/0/Prompt",
+                        "PostProcess/RefineFormal/Prompt",
                         "Line one \"quoted\" # not a comment\n"
                         "  line two with \\ backslash: 中文");
-                    rawCfg.setValueByPath("PostProcess/Actions/0/Model",
-                                          "gemini-4-hydrogen/high");
-                    rawCfg.setValueByPath("PostProcess/Actions/1/Name",
-                                          "translate_ja");
-                    rawCfg.setValueByPath("PostProcess/Actions/1/Prompt", "");
-                    rawCfg.setValueByPath("PostProcess/Actions/1/Model",
+                    rawCfg.setValueByPath("PostProcess/Translate/Model",
                                           "gemini-3.5-flash");
+                    rawCfg.setValueByPath("PostProcess/Translate/Prefetch",
+                                          "True");
+                    rawCfg.setValueByPath("PostProcess/Actions/0/Name",
+                                          "translate_ja");
+                    rawCfg.setValueByPath("PostProcess/Actions/0/Model",
+                                          "gemini-3.5-flash/low");
+                    // Not in the dropdown (custom translation language): the
+                    // value must survive setConfig untouched.
+                    rawCfg.setValueByPath("PostProcess/Actions/1/Name",
+                                          "translate_pig_latin");
+                    rawCfg.setValueByPath("PostProcess/Actions/1/Prompt",
+                                          "Translate to Pig Latin.");
                     rawCfg.setValueByPath("Connection/Proxy",
                                           "socks5://127.0.0.1:1080");
                     rawCfg.setValueByPath("Connection/LiveWsUrl",

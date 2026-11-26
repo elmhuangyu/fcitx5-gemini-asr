@@ -2,11 +2,9 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -81,8 +79,21 @@ func applyLegacyConfig(cfg *Config, lines []iniLine, legacy legacyConfig) {
 	if m := strings.TrimSpace(legacy.PostProcess.Model); m != "" && !has(pathPostModel) {
 		cfg.PostProcess.Model = m
 	}
-	if legacy.PostProcess.Prefetch != nil && !hasList(pathPostPrefetch) {
-		cfg.PostProcess.Prefetch = trimmedNonEmpty(*legacy.PostProcess.Prefetch)
+	if legacy.PostProcess.Prefetch != nil && !hasList(pathLegacyPrefetch) {
+		enabled := map[string]bool{}
+		for _, name := range trimmedNonEmpty(*legacy.PostProcess.Prefetch) {
+			if g, ok := groupForAction(name); ok {
+				enabled[g] = true
+			}
+		}
+		for _, g := range actionGroups {
+			if has(groupPath(g, "Prefetch")) {
+				continue
+			}
+			grp := cfg.PostProcess.Groups[g]
+			grp.Prefetch = enabled[g]
+			cfg.PostProcess.Groups[g] = grp
+		}
 	}
 	if len(cfg.Ime.TranslateLanguages) == 0 {
 		langs := trimmedNonEmpty(legacy.PostProcess.TranslateLanguages)
@@ -91,19 +102,44 @@ func applyLegacyConfig(cfg *Config, lines []iniLine, legacy legacyConfig) {
 			cfg.Ime.TranslateLanguages = langs
 		}
 	}
-	if len(iniStructIndices(lines, pathPostActions)) == 0 {
-		for action, m := range legacy.PostProcess.Models {
-			if trimmed := strings.TrimSpace(m); trimmed != "" {
-				if cfg.PostProcess.Models == nil {
-					cfg.PostProcess.Models = make(map[string]string)
-				}
-				cfg.PostProcess.Models[action] = trimmed
-			}
+	// Models and prompts of the built-in actions go to their fixed group; the
+	// rest (translate_<lang>, custom names) to the advanced Actions list.
+	// Prompts equal to the built-in default (the old default template listed
+	// them all) are not pinned.
+	actionsInConf := len(iniStructIndices(lines, pathPostActions)) > 0
+	for action, m := range legacy.PostProcess.Models {
+		trimmed := strings.TrimSpace(m)
+		if trimmed == "" {
+			continue
 		}
-		for action, prompt := range legacy.Prompts {
-			if strings.TrimSpace(prompt) != "" {
-				cfg.Prompts[action] = prompt
+		if isGroupAction(action) {
+			if !has(groupPath(action, "Model")) {
+				grp := cfg.PostProcess.Groups[action]
+				grp.Model = trimmed
+				cfg.PostProcess.Groups[action] = grp
 			}
+		} else if !actionsInConf {
+			if cfg.PostProcess.Models == nil {
+				cfg.PostProcess.Models = make(map[string]string)
+			}
+			cfg.PostProcess.Models[action] = trimmed
+		}
+	}
+	for action, prompt := range legacy.Prompts {
+		if strings.TrimSpace(prompt) == "" || strings.TrimSpace(prompt) == strings.TrimSpace(defaultPrompts[action]) {
+			continue
+		}
+		if isGroupAction(action) {
+			if !has(groupPath(action, "Prompt")) {
+				grp := cfg.PostProcess.Groups[action]
+				grp.Prompt = prompt
+				cfg.PostProcess.Groups[action] = grp
+			}
+		} else if !actionsInConf {
+			if cfg.Prompts == nil {
+				cfg.Prompts = make(map[string]string)
+			}
+			cfg.Prompts[action] = prompt
 		}
 	}
 }
@@ -156,22 +192,4 @@ func MigrateLegacyConfig(tomlPath, confPath string) (bool, error) {
 		return modified, fmt.Errorf("rename legacy config to %q: %w", dest, err)
 	}
 	return modified, nil
-}
-
-// migrateLegacyIfDefault runs MigrateLegacyConfig when confPath is the default
-// conf location (custom paths never touch the user's real legacy config) and
-// reloads Fcitx5 when the addon-consumed keys may have changed.
-func migrateLegacyIfDefault(confPath string, deps cliDeps, logf func(format string, args ...any)) {
-	if filepath.Clean(confPath) != filepath.Clean(DefaultConfigPath()) {
-		return
-	}
-	modified, err := MigrateLegacyConfig(legacyTOMLPath(), confPath)
-	if err != nil {
-		logf("migrate legacy config %s: %v", legacyTOMLPath(), err)
-		return
-	}
-	if modified {
-		logf("migrated settings from %s into %s (old file renamed to config.toml.migrated)", legacyTOMLPath(), confPath)
-		ReloadFcitx5Config(context.Background(), deps)
-	}
 }

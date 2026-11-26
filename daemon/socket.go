@@ -384,7 +384,9 @@ func (cs *clientSession) handleStartRecording(reqLang string) {
 		rawText = strings.TrimSpace(rawText)
 		latestCfg := cs.server.deps.ConfigManager.Get()
 		if rawText != "" {
-			cs.prefetch.StartPrefetch(cs.baseCtx, rawText, latestCfg.PostProcess.Prefetch, cs.makePostProcessFn(latestCfg, apiKey))
+			cs.prefetch.StartPrefetch(cs.baseCtx, rawText, latestCfg.PrefetchItems(), func(label string) PostProcessFunc {
+				return cs.makePostProcessFn(latestCfg, apiKey, label)
+			})
 		}
 
 		cs.sendIfSession(sid, ServerEvent{

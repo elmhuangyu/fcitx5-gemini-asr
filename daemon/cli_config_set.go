@@ -90,6 +90,9 @@ func resolveTranslateModelAction(cfg Config, raw string) (string, bool) {
 }
 
 func isKnownOrConfiguredAction(cfg Config, action string) bool {
+	if action == translateGroup {
+		return true
+	}
 	for _, known := range KnownActions {
 		if action == known {
 			return true
