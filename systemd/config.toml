@@ -22,10 +22,10 @@ translate_languages = ["en"]
 # Not valid for live_transcribe.model.
 # refine_fix_typos = "gemini-3.5-flash-lite"
 # refine_casual = "gemini-3.5-flash"
-# refine_formal = "gemini-3.5-pro"
-# as_prompt = "gemini-3.5-pro"
+# refine_formal = "gemini-3.1-pro-preview"
+# as_prompt = "gemini-3.1-pro-preview"
 # translate_en = "gemini-3.5-flash/low"
-# ask_ai = "gemini-3.5-pro"
+# ask_ai = "gemini-3.1-pro-preview"
 
 [prompts]
 refine_fix_typos = "仅修正以下语音转录文本中的错别字、同音字错误和标点符号。严禁增删词汇或改变原本的口语语气，直接输出结果："

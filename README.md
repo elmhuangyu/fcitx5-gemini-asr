@@ -100,7 +100,7 @@ gemini-voice models
 gemini-voice models --remote
 
 # Choose models for live ASR, default post-processing, and individual actions:
-gemini-voice models --live gemini-3.5-transcribe-live --default gemini-3.5-flash-lite --refine-formal gemini-3.5-pro --as-prompt gemini-3.5-pro
+gemini-voice models --live gemini-3.5-transcribe-live --default gemini-3.5-flash-lite --refine-formal gemini-3.1-pro-preview --as-prompt gemini-3.1-pro-preview
 gemini-voice models --translate ja=gemini-3.5-flash/low --translate en=default  # Override or clear dynamic translate_<lang> targets (repeatable)
 gemini-voice config set model.refine_fix_typos gemini-3.5-flash-lite
 gemini-voice config set model.refine_formal gemini-3.5-flash/low   # Thinking effort via model suffix
