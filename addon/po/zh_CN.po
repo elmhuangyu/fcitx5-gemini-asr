@@ -123,5 +123,77 @@ msgstr "语音会话已意外结束"
 msgid "Disconnected from Gemini Voice Daemon"
 msgstr "与 Gemini Voice Daemon 断开连接"
 
+#: addon/engine.h
+msgid "Live Transcription"
+msgstr "实时转录"
+
+#: addon/engine.h
+msgid "Post-processing"
+msgstr "后处理"
+
+#: addon/engine.h
+msgid "Connection"
+msgstr "连接"
+
+#: addon/engine.h
+msgid "Live Model"
+msgstr "实时转录模型"
+
+#: addon/engine.h
+msgid "Transcription Mode"
+msgstr "转录模式"
+
+#: addon/engine.h
+msgid "VERBATIM"
+msgstr ""
+
+#: addon/engine.h
+msgid "SMART"
+msgstr ""
+
+#: addon/engine.h
+msgid "Custom Vocabulary"
+msgstr "自定义词汇"
+
+#: addon/engine.h
+msgid "Auto-stop Silence (ms, 0 disables)"
+msgstr "自动停止静音时长（毫秒，0 为禁用）"
+
+#: addon/engine.h
+msgid "Action Name"
+msgstr "操作名称"
+
+#: addon/engine.h
+msgid "Prompt (empty uses built-in)"
+msgstr "提示词（留空使用内置提示词）"
+
+#: addon/engine.h
+msgid "Model (empty uses default post-process model)"
+msgstr "模型（留空使用默认后处理模型）"
+
+#: addon/engine.h
+msgid "Default Model"
+msgstr "默认模型"
+
+#: addon/engine.h
+msgid "Prefetched Actions"
+msgstr "预取的操作"
+
+#: addon/engine.h
+msgid "Action Overrides"
+msgstr "操作覆盖设置"
+
+#: addon/engine.h
+msgid "Proxy URL"
+msgstr "代理地址"
+
+#: addon/engine.h
+msgid "Live WebSocket URL"
+msgstr "实时转录 WebSocket 地址"
+
+#: addon/engine.h
+msgid "API Base URL"
+msgstr "API 基础地址"
+
 #~ msgid "[Recording...]"
 #~ msgstr "[录音中...]"

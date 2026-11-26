@@ -128,3 +128,75 @@ msgstr ""
 #: addon/engine.cpp:1098 addon/engine.cpp:1104
 msgid "Disconnected from Gemini Voice Daemon"
 msgstr ""
+
+#: addon/engine.h
+msgid "Live Transcription"
+msgstr ""
+
+#: addon/engine.h
+msgid "Post-processing"
+msgstr ""
+
+#: addon/engine.h
+msgid "Connection"
+msgstr ""
+
+#: addon/engine.h
+msgid "Live Model"
+msgstr ""
+
+#: addon/engine.h
+msgid "Transcription Mode"
+msgstr ""
+
+#: addon/engine.h
+msgid "VERBATIM"
+msgstr ""
+
+#: addon/engine.h
+msgid "SMART"
+msgstr ""
+
+#: addon/engine.h
+msgid "Custom Vocabulary"
+msgstr ""
+
+#: addon/engine.h
+msgid "Auto-stop Silence (ms, 0 disables)"
+msgstr ""
+
+#: addon/engine.h
+msgid "Action Name"
+msgstr ""
+
+#: addon/engine.h
+msgid "Prompt (empty uses built-in)"
+msgstr ""
+
+#: addon/engine.h
+msgid "Model (empty uses default post-process model)"
+msgstr ""
+
+#: addon/engine.h
+msgid "Default Model"
+msgstr ""
+
+#: addon/engine.h
+msgid "Prefetched Actions"
+msgstr ""
+
+#: addon/engine.h
+msgid "Action Overrides"
+msgstr ""
+
+#: addon/engine.h
+msgid "Proxy URL"
+msgstr ""
+
+#: addon/engine.h
+msgid "Live WebSocket URL"
+msgstr ""
+
+#: addon/engine.h
+msgid "API Base URL"
+msgstr ""

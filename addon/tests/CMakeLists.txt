@@ -30,6 +30,21 @@ target_link_libraries(test_engine_integration PRIVATE
 target_compile_definitions(test_engine_integration PRIVATE
     BUILD_ADDON_SO="$<TARGET_FILE:gemini-voice>"
     BUILD_ADDON_CONF="${CMAKE_BINARY_DIR}/gemini-voice-addon.conf"
+    GOLDEN_CONF_PATH="${CMAKE_CURRENT_SOURCE_DIR}/../../daemon/testdata/gemini-voice.conf"
 )
 add_dependencies(test_engine_integration gemini-voice)
 add_test(NAME test_engine_integration COMMAND test_engine_integration)
+
+add_executable(test_config_schema test_config_schema.cpp)
+target_include_directories(test_config_schema PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/..")
+target_link_libraries(test_config_schema PRIVATE
+    Fcitx5::Core
+    Fcitx5::Config
+    Fcitx5::Utils
+    nlohmann_json::nlohmann_json
+)
+target_compile_definitions(test_config_schema PRIVATE
+    FCITX_GETTEXT_DOMAIN="fcitx5-gemini-voice"
+    GOLDEN_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../../daemon/testdata"
+)
+add_test(NAME test_config_schema COMMAND test_config_schema)

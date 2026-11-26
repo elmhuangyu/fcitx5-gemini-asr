@@ -4,15 +4,18 @@
 #include <cerrno>
 #include <chrono>
 #include <condition_variable>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <poll.h>
+#include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -1006,6 +1009,89 @@ int main() {
                 REQUIRE(ic->committed[10] == "Hello");
                 runOnMain(instance, [&]() {
                     fcitx::RawConfig rawCfg;
+                    rawCfg.setValueByPath("SocketPath", sockPath);
+                    addon->setConfig(rawCfg);
+                });
+            }
+
+            // 7f. Full-schema save: every daemon-consumed key must survive the
+            // addon's own save path. The resulting conf is compared against the
+            // golden file the Go daemon's loader tests parse, so both sides
+            // provably agree on the real Fcitx5 serialization format.
+            {
+                const fs::path confPath =
+                    configDir / "fcitx5" / "conf" / "gemini-voice.conf";
+                runOnMain(instance, [&]() {
+                    fcitx::RawConfig rawCfg;
+                    rawCfg.setValueByPath("TriggerKey/0", "Alt+space");
+                    rawCfg.setValueByPath("TriggerKey/1", "Control+F12");
+                    rawCfg.setValueByPath("ShowActionMenu", "True");
+                    rawCfg.setValueByPath("SocketPath",
+                                          "$XDG_RUNTIME_DIR/gemini-ime.sock");
+                    rawCfg.setValueByPath("Language", "cmn-Hans-CN,en-US");
+                    rawCfg.setValueByPath("RecordingPrefix", "🎙️");
+                    rawCfg.setValueByPath("PreeditMaxWidth", "80");
+                    rawCfg.setValueByPath("TranslateLanguages/0", "en");
+                    rawCfg.setValueByPath("TranslateLanguages/1", "Pig Latin");
+                    rawCfg.setValueByPath("LiveTranscription/Model",
+                                          "gemini-3.5-transcribe-live");
+                    rawCfg.setValueByPath("LiveTranscription/Mode", "SMART");
+                    rawCfg.setValueByPath(
+                        "LiveTranscription/CustomVocabulary/0", "Fcitx5");
+                    rawCfg.setValueByPath(
+                        "LiveTranscription/CustomVocabulary/1", "Pipe Wire");
+                    rawCfg.setValueByPath("LiveTranscription/VadSilenceMs",
+                                          "1500");
+                    rawCfg.setValueByPath("PostProcess/Model",
+                                          "gemini-3.5-flash/low");
+                    rawCfg.setValueByPath("PostProcess/Prefetch/0",
+                                          "refine_fix_typos");
+                    rawCfg.setValueByPath("PostProcess/Prefetch/1",
+                                          "refine_formal");
+                    rawCfg.setValueByPath("PostProcess/Actions/0/Name",
+                                          "refine_casual");
+                    rawCfg.setValueByPath(
+                        "PostProcess/Actions/0/Prompt",
+                        "Line one \"quoted\" # not a comment\n"
+                        "  line two with \\ backslash: 中文");
+                    rawCfg.setValueByPath("PostProcess/Actions/0/Model",
+                                          "gemini-4-hydrogen/high");
+                    rawCfg.setValueByPath("PostProcess/Actions/1/Name",
+                                          "translate_ja");
+                    rawCfg.setValueByPath("PostProcess/Actions/1/Prompt", "");
+                    rawCfg.setValueByPath("PostProcess/Actions/1/Model",
+                                          "gemini-3.5-flash");
+                    rawCfg.setValueByPath("Connection/Proxy",
+                                          "socks5://127.0.0.1:1080");
+                    rawCfg.setValueByPath("Connection/LiveWsUrl",
+                                          "wss://example.invalid/live");
+                    rawCfg.setValueByPath("Connection/ApiBaseUrl",
+                                          "https://example.invalid/v1beta");
+                    addon->setConfig(rawCfg);
+                });
+                std::ifstream in(confPath);
+                REQUIRE(in.good());
+                std::stringstream saved;
+                saved << in.rdbuf();
+                if (::getenv("UPDATE_GOLDEN")) {
+                    std::ofstream out(GOLDEN_CONF_PATH, std::ios::binary);
+                    out << saved.str();
+                }
+                std::ifstream gin(GOLDEN_CONF_PATH);
+                REQUIRE(gin.good());
+                std::stringstream expected;
+                expected << gin.rdbuf();
+                if (saved.str() != expected.str()) {
+                    std::fprintf(stderr,
+                                 "golden conf mismatch (rerun with "
+                                 "UPDATE_GOLDEN=1 to regenerate)\n--- "
+                                 "saved\n%s--- golden\n%s",
+                                 saved.str().c_str(), expected.str().c_str());
+                }
+                REQUIRE(saved.str() == expected.str());
+                runOnMain(instance, [&]() {
+                    fcitx::RawConfig rawCfg;
+                    rawCfg.setValueByPath("TranslateLanguages/0", "en");
                     rawCfg.setValueByPath("SocketPath", sockPath);
                     addon->setConfig(rawCfg);
                 });
