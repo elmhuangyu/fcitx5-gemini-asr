@@ -17,7 +17,7 @@ translate_languages = ["en"]
 
 [post_process.models]
 # Optional per-action model overrides (empty inherits post_process.model).
-# A "/minimal|low|medium|high" suffix sets thinking effort (gemini-3.x: thinkingLevel).
+# A "/minimal|low|medium|high" suffix sets thinking effort (gemini-3 and newer: thinkingLevel).
 # Without a suffix refine_*/translate_* use "minimal"; ask_ai and as_prompt use the provider default.
 # Not valid for live_transcribe.model.
 # refine_fix_typos = "gemini-3.5-flash-lite"

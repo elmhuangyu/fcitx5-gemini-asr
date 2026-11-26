@@ -316,6 +316,12 @@ func TestParseModelSpecAndMapping(t *testing.T) {
 	if buildThinkingConfig("gemini-2.5-pro", "minimal") != nil {
 		t.Fatal("gemini-2.5 must have no thinking config")
 	}
+	if c := buildThinkingConfig("gemini-4-hydrogen", "high"); c == nil || c.ThinkingLevel != "high" {
+		t.Fatalf("gemini-4 high -> %+v", c)
+	}
+	if _, err := ParseModelSpec("gemini-4-hydrogen/low"); err != nil {
+		t.Fatalf("gemini-4 suffix must be accepted: %v", err)
+	}
 	if buildThinkingConfig("gemma-3", "low") != nil {
 		t.Fatal("unsupported family must have no config")
 	}

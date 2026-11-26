@@ -48,7 +48,7 @@ func ParseModelSpec(spec string) (ModelSpec, error) {
 			return ModelSpec{}, fmt.Errorf("invalid thinking effort %q in model %q (valid: %s)", effort, spec, strings.Join(thinkingEfforts, ", "))
 		}
 		if !supportsThinkingLevel(name) {
-			return ModelSpec{}, fmt.Errorf("thinking effort %q is not supported for model %q (only gemini-3.x models)", effort, name)
+			return ModelSpec{}, fmt.Errorf("thinking effort %q is not supported for model %q (only gemini-3 and newer models)", effort, name)
 		}
 	}
 	return ModelSpec{Name: name, Effort: effort}, nil
@@ -85,9 +85,27 @@ func DescribeModelSpec(spec, action string) (name, effort string) {
 	return ms.Name, "provider default"
 }
 
-// supportsThinkingLevel reports whether the model takes a thinkingLevel (gemini-3.x).
+// supportsThinkingLevel reports whether the model takes a thinkingLevel
+// (gemini-3 and newer major versions, e.g. gemini-3.5-flash, gemini-4-hydrogen).
 func supportsThinkingLevel(name string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimPrefix(name, "models/")), "gemini-3")
+	n := strings.ToLower(strings.TrimPrefix(name, "models/"))
+	rest, ok := strings.CutPrefix(n, "gemini-")
+	if !ok {
+		return false
+	}
+	major := 0
+	digits := 0
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			break
+		}
+		major = major*10 + int(r-'0')
+		digits++
+		if digits > 3 {
+			return false
+		}
+	}
+	return digits > 0 && major >= 3
 }
 
 type thinkingConfig struct {
