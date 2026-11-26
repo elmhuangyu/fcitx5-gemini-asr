@@ -14,6 +14,7 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 
 - **Fcitx5** (>= 5.1.22) development headers and CMake packages (`Fcitx5Core`, `Fcitx5Config`, `Fcitx5Utils`; note that Ubuntu 26.04's `libfcitx5*-dev` is 5.1.19 and too old — build fcitx5 from source or use a newer distro, matching `.github/workflows/ci.yml` `FCITX5_VERSION`)
 - **C++20** compiler (`g++` or `clang++`), `cmake`, `pkg-config`
+- **nlohmann/json** >= 3 (`nlohmann-json3-dev` on Debian/Ubuntu, `nlohmann-json` on Arch, `json-devel` on Fedora); if not found by CMake, the build downloads the pinned v3.12.0 release via FetchContent (needs network)
 - **Go** (>= 1.27.4, matching `daemon/go.mod`)
 - **PipeWire** (`pw-record`)
 - **systemd** (`systemd-creds --user`; falls back to `GEMINI_API_KEY` env var when `CREDENTIALS_DIRECTORY` is unset)

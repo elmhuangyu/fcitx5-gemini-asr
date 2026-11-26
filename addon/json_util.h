@@ -23,9 +23,10 @@ std::string buildCommandJson(
     std::initializer_list<std::pair<std::string_view, std::string_view>>
         fields = {});
 
-// Parses a single-line JSON object into a string map of top-level string
-// fields. Non-string values (booleans, numbers, null, nested objects/arrays)
-// are validated and skipped. Returns std::nullopt on malformed JSON.
+// Parses (via nlohmann/json) a single-line JSON object into a string map of
+// top-level string fields. Non-string values (booleans, numbers, null, nested
+// objects/arrays) are validated and skipped. Returns std::nullopt on malformed
+// JSON.
 std::optional<std::unordered_map<std::string, std::string>>
 parseFlatJsonObject(std::string_view line);
 
