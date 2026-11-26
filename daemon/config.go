@@ -120,17 +120,20 @@ mode = "VERBATIM"        # "VERBATIM" (literal) or "SMART" (disfluency cleanup &
 vad_silence_ms = 1200 # server-side VAD trailing silence before auto-stop (0 disables)
 
 [post_process]
-model = "gemini-3.5-flash-lite"
+model = "gemini-3.5-flash-lite" # optional thinking effort suffix: "/minimal", "/low", "/medium" or "/high" (e.g. "gemini-3.5-flash/low")
 prefetch = ["refine_fix_typos", "refine_formal"]
 translate_languages = ["en"]
 
 [post_process.models]
-# Optional per-action model overrides (empty inherits post_process.model):
+# Optional per-action model overrides (empty inherits post_process.model).
+# A "/minimal|low|medium|high" suffix sets thinking effort (gemini-3.x: thinkingLevel; gemini-2.5: thinkingBudget).
+# Without a suffix refine_*/translate_* use "minimal"; ask_ai and as_prompt use the provider default.
+# Not valid for live_transcribe.model.
 # refine_fix_typos = "gemini-2.5-flash-lite"
 # refine_casual = "gemini-2.5-flash"
 # refine_formal = "gemini-2.5-pro"
 # as_prompt = "gemini-2.5-pro"
-# translate_en = "gemini-2.5-flash"
+# translate_en = "gemini-2.5-flash/low"
 # ask_ai = "gemini-2.5-pro"
 
 [prompts]
@@ -485,6 +488,20 @@ func LoadConfigFile(path string) (Config, error) {
 	}
 	if strings.TrimSpace(cfg.PostProcess.Model) == "" {
 		cfg.PostProcess.Model = DefaultPostProcessModel
+	}
+	if err := ValidateLiveModel(cfg.LiveTranscribe.Model); err != nil {
+		return Config{}, err
+	}
+	if err := ValidatePostProcessModel(cfg.PostProcess.Model); err != nil {
+		return Config{}, fmt.Errorf("post_process.model: %w", err)
+	}
+	for action, m := range cfg.PostProcess.Models {
+		if strings.TrimSpace(m) == "" {
+			continue
+		}
+		if err := ValidatePostProcessModel(m); err != nil {
+			return Config{}, fmt.Errorf("post_process.models.%s: %w", action, err)
+		}
 	}
 	cfg.PostProcess.TranslateLanguages = normalizeTranslateLanguages(cfg.PostProcess.TranslateLanguages)
 	return cfg, nil

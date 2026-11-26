@@ -26,13 +26,13 @@ func cmdModels(args []string, deps cliDeps) int {
 	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
 	remote := fs.Bool("remote", false, "Query Gemini API /v1beta/models using configured credentials")
 	liveModel := fs.String("live", "", "Set live transcription model")
-	defaultModel := fs.String("default", "", "Set default post-processing model")
+	defaultModel := fs.String("default", "", "Set default post-processing model; optional thinking effort suffix /minimal|low|medium|high, e.g. gemini-3.5-flash/low")
 	fixTypos := fs.String("refine-fix-typos", "", "Set model override for refine_fix_typos (\"default\" clears)")
 	casual := fs.String("refine-casual", "", "Set model override for refine_casual (\"default\" clears)")
 	formal := fs.String("refine-formal", "", "Set model override for refine_formal (\"default\" clears)")
 	translateEn := fs.String("translate-en", "", "Set model override for translate_en (\"default\" clears)")
 	var translateFlags stringSliceFlag
-	fs.Var(&translateFlags, "translate", "Set model override for a translation target as <lang>=<model> (e.g. ja=gemini-2.5-flash, \"<lang>=default\" clears)")
+	fs.Var(&translateFlags, "translate", "Set model override for a translation target as <lang>=<model>[/effort] (e.g. ja=gemini-2.5-flash/low, \"<lang>=default\" clears)")
 	asPrompt := fs.String("as-prompt", "", "Set model override for as_prompt (\"default\" clears)")
 	askAI := fs.String("ask-ai", "", "Set model override for ask_ai (\"default\" clears)")
 	if err := fs.Parse(args); err != nil {
@@ -59,12 +59,20 @@ func cmdModels(args []string, deps cliDeps) int {
 			_, _ = fmt.Fprintln(deps.stderr, "error: --live cannot be empty")
 			return 1
 		}
+		if err := ValidateLiveModel(*liveModel); err != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "error: --live: %v\n", err)
+			return 1
+		}
 		cfg.LiveTranscribe.Model = strings.TrimSpace(*liveModel)
 		dirty = true
 	}
 	if visited["default"] {
 		if strings.TrimSpace(*defaultModel) == "" {
 			_, _ = fmt.Fprintln(deps.stderr, "error: --default cannot be empty")
+			return 1
+		}
+		if err := ValidatePostProcessModel(*defaultModel); err != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "error: --default: %v\n", err)
 			return 1
 		}
 		cfg.PostProcess.Model = strings.TrimSpace(*defaultModel)
@@ -85,7 +93,10 @@ func cmdModels(args []string, deps cliDeps) int {
 	}
 	for _, af := range actionFlags {
 		if visited[af.flagName] {
-			setActionModelOverride(&cfg, af.action, af.val)
+			if err := setActionModelOverride(&cfg, af.action, af.val); err != nil {
+				_, _ = fmt.Fprintf(deps.stderr, "error: --%s: %v\n", af.flagName, err)
+				return 1
+			}
 			dirty = true
 		}
 	}
@@ -105,7 +116,10 @@ func cmdModels(args []string, deps cliDeps) int {
 			_, _ = fmt.Fprintf(deps.stderr, "error: unknown translation target %q (use a known language like en, ja, zh-cn or configure it in post_process.translate_languages)\n", lang)
 			return 2
 		}
-		setActionModelOverride(&cfg, action, model)
+		if err := setActionModelOverride(&cfg, action, model); err != nil {
+			_, _ = fmt.Fprintf(deps.stderr, "error: --translate %s: %v\n", lang, err)
+			return 1
+		}
 		dirty = true
 	}
 

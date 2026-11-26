@@ -487,7 +487,7 @@ func (cs *clientSession) handlePostProcess(action, targetLabel string) {
 		defer cs.wg.Done()
 		defer postCancel()
 
-		res, err := cs.prefetch.Resolve(postCtx, action, fn)
+		res, err := cs.prefetch.Resolve(postCtx, action, targetLabel, fn)
 		if postCtx.Err() != nil || !cs.isCurrent(sid) {
 			return
 		}

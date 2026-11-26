@@ -176,9 +176,11 @@ func printModelTable(w io.Writer, cfg Config) {
 	for _, action := range cfg.EffectiveActionNames() {
 		override := strings.TrimSpace(cfg.PostProcess.Models[action])
 		if override != "" {
-			_, _ = fmt.Fprintf(w, "  %-20s %s (override)\n", "model."+action+":", override)
+			name, effort := DescribeModelSpec(override, action)
+			_, _ = fmt.Fprintf(w, "  %-20s %s (override)  effort: %s\n", "model."+action+":", name, effort)
 		} else {
-			_, _ = fmt.Fprintf(w, "  %-20s %s (inherited)\n", "model."+action+":", cfg.ModelForAction(action))
+			name, effort := DescribeModelSpec(cfg.ModelForAction(action), action)
+			_, _ = fmt.Fprintf(w, "  %-20s %s (inherited)  effort: %s\n", "model."+action+":", name, effort)
 		}
 	}
 }

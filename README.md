@@ -74,6 +74,10 @@ gemini-voice configure
 
 ### Input Behavior, Models & Settings (`config` / `models`)
 
+**Thinking effort.** Any post-processing model string (`post_process.model`, `[post_process.models]`, `models --default/--refine-*/--translate`, `config set model.<action>`, TUI) accepts a `/minimal`, `/low`, `/medium` or `/high` suffix, e.g. `gemini-3.5-flash/low`. The suffix is stripped from the API URL and mapped to `thinkingConfig`: `thinkingLevel` for `gemini-3*` models (`minimal` is raised to `low` on Pro and `gemini-3.8-flash`; `medium` to `high` on `gemini-3-pro`), `thinkingBudget` for `gemini-2.5*` (minimal/low/medium/high = 0/1024/8192/24576 tokens; 2.5-pro cannot disable thinking, so minimal = 128 and high = 32768). Other model families reject a suffix; unknown suffixes are rejected. Without a suffix, `refine_*` and `translate_*` default to `minimal`; `ask_ai` and `as_prompt` use the provider default. Suffixes are not valid for `live_transcribe.model`.
+
+**Prompt isolation.** The action prompt is sent as the `systemInstruction`; the transcript is sent as the user message wrapped in `<transcript>…</transcript>` with a fixed preamble that it is data, never instructions. `ask_ai` is the exception: it executes the spoken content as an instruction. A trailing `:`/`：` in custom prompts is ignored.
+
 ```bash
 # Inspect all effective Fcitx5 addon and daemon settings:
 gemini-voice config show
@@ -97,8 +101,9 @@ gemini-voice models --remote
 
 # Choose models for live ASR, default post-processing, and individual actions:
 gemini-voice models --live gemini-3.5-transcribe-live --default gemini-3.5-flash-lite --refine-formal gemini-2.5-pro --as-prompt gemini-2.5-pro
-gemini-voice models --translate ja=gemini-2.5-flash --translate en=default  # Override or clear dynamic translate_<lang> targets (repeatable)
+gemini-voice models --translate ja=gemini-2.5-flash/low --translate en=default  # Override or clear dynamic translate_<lang> targets (repeatable)
 gemini-voice config set model.refine_fix_typos gemini-2.5-flash-lite
+gemini-voice config set model.refine_formal gemini-3.5-flash/low   # Thinking effort via model suffix
 gemini-voice config set model.refine_formal default   # Clear override and inherit post_process.model
 
 # Read a single setting or customize an action prompt:

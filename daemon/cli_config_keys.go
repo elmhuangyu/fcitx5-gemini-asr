@@ -102,6 +102,9 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 		if trimmed == "" {
 			return false, false, errors.New("live.model cannot be empty")
 		}
+		if err := ValidateLiveModel(trimmed); err != nil {
+			return false, false, err
+		}
 		cfg.LiveTranscribe.Model = trimmed
 		return true, false, nil
 	case "live.language", "live_transcribe.language":
@@ -147,6 +150,9 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 		if trimmed == "" {
 			return false, false, errors.New("post_process.model cannot be empty")
 		}
+		if err := ValidatePostProcessModel(trimmed); err != nil {
+			return false, false, err
+		}
 		cfg.PostProcess.Model = trimmed
 		return true, false, nil
 	case "post_process.prefetch":
@@ -181,7 +187,9 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 		if !isKnownOrConfiguredAction(*cfg, action) {
 			return false, false, fmt.Errorf("unknown action %q", action)
 		}
-		setActionModelOverride(cfg, action, val)
+		if err := setActionModelOverride(cfg, action, val); err != nil {
+			return false, false, err
+		}
 		return true, false, nil
 	}
 	if action, ok := parseActionKey(key, "prompt.", "prompts."); ok {
@@ -202,14 +210,18 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 	return false, false, fmt.Errorf("unknown config key %q", key)
 }
 
-func setActionModelOverride(cfg *Config, action, val string) {
+func setActionModelOverride(cfg *Config, action, val string) error {
 	trimmed := strings.TrimSpace(val)
 	if trimmed == "" || strings.EqualFold(trimmed, "default") || trimmed == "-" {
 		delete(cfg.PostProcess.Models, action)
-		return
+		return nil
+	}
+	if err := ValidatePostProcessModel(trimmed); err != nil {
+		return err
 	}
 	if cfg.PostProcess.Models == nil {
 		cfg.PostProcess.Models = make(map[string]string)
 	}
 	cfg.PostProcess.Models[action] = trimmed
+	return nil
 }

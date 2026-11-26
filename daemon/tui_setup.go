@@ -164,14 +164,24 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 				Description("Gemini Live API model used for streaming speech recognition.").
 				Suggestions([]string{DefaultLiveModel}).
 				Value(&state.liveModel).
-				Validate(validateNonEmpty("live.model")),
+				Validate(func(s string) error {
+					if err := validateNonEmpty("live.model")(s); err != nil {
+						return err
+					}
+					return ValidateLiveModel(s)
+				}),
 
 			huh.NewInput().
 				Title("Default post-processing model").
 				Description("Used for Refine / Translate / Ask AI unless overridden per action.").
 				Suggestions([]string{DefaultPostProcessModel, "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"}).
 				Value(&state.postProcessModel).
-				Validate(validateNonEmpty("post_process.model")),
+				Validate(func(s string) error {
+					if err := validateNonEmpty("post_process.model")(s); err != nil {
+						return err
+					}
+					return ValidatePostProcessModel(s)
+				}),
 
 			huh.NewConfirm().
 				Title("Configure per-action model overrides?").
@@ -190,13 +200,20 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 				Title(action).
 				Placeholder("default (inherit "+state.postProcessModel+")").
 				Suggestions([]string{DefaultPostProcessModel, "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro"}).
-				Value(&state.actionOverrides[idx]),
+				Value(&state.actionOverrides[idx]).
+				Validate(func(s string) error {
+					t := strings.TrimSpace(s)
+					if t == "" || strings.EqualFold(t, "default") || t == "-" {
+						return nil
+					}
+					return ValidatePostProcessModel(t)
+				}),
 		)
 	}
 	groups = append(groups,
 		huh.NewGroup(overrideFields...).
 			Title("3. Per-Action Model Overrides").
-			Description("Leave blank or enter \"default\" to inherit the default post-processing model.").
+			Description("Leave blank or enter \"default\" to inherit the default post-processing model. Optional thinking effort suffix: model/minimal|low|medium|high.").
 			WithHideFunc(func() bool { return !state.configureOverrides }),
 	)
 
@@ -341,7 +358,9 @@ func applySetupFormState(cfg *Config, fcitxCfg *FcitxAddonConfig, state *setupFo
 	if state.configureOverrides {
 		for i, action := range state.actionOrder {
 			if i < len(state.actionOverrides) {
-				setActionModelOverride(cfg, action, state.actionOverrides[i])
+				if err := setActionModelOverride(cfg, action, state.actionOverrides[i]); err != nil {
+					return fmt.Errorf("model.%s: %w", action, err)
+				}
 			}
 		}
 	} else {
