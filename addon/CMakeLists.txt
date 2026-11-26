@@ -5,17 +5,13 @@ find_package(Fcitx5Core REQUIRED)
 include("${FCITX_INSTALL_CMAKECONFIG_DIR}/Fcitx5Utils/Fcitx5CompilerSettings.cmake")
 find_package(Gettext)
 
-# nlohmann/json: prefer the system package, fall back to a pinned release.
-find_package(nlohmann_json 3.2.0 CONFIG QUIET)
-if(NOT nlohmann_json_FOUND)
-    message(STATUS "System nlohmann_json not found; fetching v3.12.0")
-    include(FetchContent)
-    FetchContent_Declare(nlohmann_json
-        URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
-        URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-    FetchContent_MakeAvailable(nlohmann_json)
-endif()
+# nlohmann/json is fetched at configure time, pinned to an exact release.
+include(FetchContent)
+FetchContent_Declare(nlohmann_json
+    URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
+    URL_HASH SHA256=42f6e95cad6ec532fd372391373363b62a14af6d771056dbfc86160e6dfff7aa
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(nlohmann_json)
 
 option(ENABLE_TEST "Enable unit and integration tests" ON)
 

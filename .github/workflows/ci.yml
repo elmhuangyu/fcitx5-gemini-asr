@@ -69,7 +69,6 @@ jobs:
             gettext \
             extra-cmake-modules \
             libuv1-dev \
-            nlohmann-json3-dev \
             uuid-dev \
             git \
             make

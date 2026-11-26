@@ -32,11 +32,11 @@ func TestCLI_ModelEffortSuffix(t *testing.T) {
 		return runCLI("gemini-voice", args, deps)
 	}
 
-	if code := run("models", "--config", cfgPath, "--refine-formal", "gemini-3.5-flash/low", "--default", "gemini-2.5-flash/medium"); code != 0 {
+	if code := run("models", "--config", cfgPath, "--refine-formal", "gemini-3.5-flash/low", "--default", "gemini-3.5-flash/medium"); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
 	loaded, err := LoadConfigFile(cfgPath)
-	if err != nil || loaded.ModelForAction("refine_formal") != "gemini-3.5-flash/low" || loaded.PostProcess.Model != "gemini-2.5-flash/medium" {
+	if err != nil || loaded.ModelForAction("refine_formal") != "gemini-3.5-flash/low" || loaded.PostProcess.Model != "gemini-3.5-flash/medium" {
 		t.Fatalf("not saved: %v %+v", err, loaded.PostProcess)
 	}
 	if code := run("models", "--config", cfgPath); code != 0 || !strings.Contains(stdout.String(), "gemini-3.5-flash (override)  effort: low") {

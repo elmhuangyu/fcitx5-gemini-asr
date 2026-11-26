@@ -32,7 +32,7 @@ func cmdModels(args []string, deps cliDeps) int {
 	formal := fs.String("refine-formal", "", "Set model override for refine_formal (\"default\" clears)")
 	translateEn := fs.String("translate-en", "", "Set model override for translate_en (\"default\" clears)")
 	var translateFlags stringSliceFlag
-	fs.Var(&translateFlags, "translate", "Set model override for a translation target as <lang>=<model>[/effort] (e.g. ja=gemini-2.5-flash/low, \"<lang>=default\" clears)")
+	fs.Var(&translateFlags, "translate", "Set model override for a translation target as <lang>=<model>[/effort] (e.g. ja=gemini-3.5-flash/low, \"<lang>=default\" clears)")
 	asPrompt := fs.String("as-prompt", "", "Set model override for as_prompt (\"default\" clears)")
 	askAI := fs.String("ask-ai", "", "Set model override for ask_ai (\"default\" clears)")
 	if err := fs.Parse(args); err != nil {
@@ -103,7 +103,7 @@ func cmdModels(args []string, deps cliDeps) int {
 	for _, spec := range translateFlags {
 		lang, model, ok := strings.Cut(spec, "=")
 		if !ok {
-			_, _ = fmt.Fprintln(deps.stderr, "error: --translate must be in <lang>=<model> format (e.g. --translate ja=gemini-2.5-flash)")
+			_, _ = fmt.Fprintln(deps.stderr, "error: --translate must be in <lang>=<model> format (e.g. --translate ja=gemini-3.5-flash)")
 			return 2
 		}
 		lang = strings.TrimSpace(lang)

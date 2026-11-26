@@ -47,8 +47,8 @@ func ParseModelSpec(spec string) (ModelSpec, error) {
 		if !valid {
 			return ModelSpec{}, fmt.Errorf("invalid thinking effort %q in model %q (valid: %s)", effort, spec, strings.Join(thinkingEfforts, ", "))
 		}
-		if thinkingFamily(name) == "" {
-			return ModelSpec{}, fmt.Errorf("thinking effort %q is not supported for model %q (only gemini-3.x and gemini-2.5 models)", effort, name)
+		if !supportsThinkingLevel(name) {
+			return ModelSpec{}, fmt.Errorf("thinking effort %q is not supported for model %q (only gemini-3.x models)", effort, name)
 		}
 	}
 	return ModelSpec{Name: name, Effort: effort}, nil
@@ -79,70 +79,37 @@ func DescribeModelSpec(spec, action string) (name, effort string) {
 	if ms.Effort != "" {
 		return ms.Name, ms.Effort
 	}
-	if d := defaultEffortForAction(action); d != "" && thinkingFamily(ms.Name) != "" {
+	if d := defaultEffortForAction(action); d != "" && supportsThinkingLevel(ms.Name) {
 		return ms.Name, d + " (default)"
 	}
 	return ms.Name, "provider default"
 }
 
-// thinkingFamily returns "level" for gemini-3.x, "budget" for gemini-2.5, "" otherwise.
-func thinkingFamily(name string) string {
-	n := strings.ToLower(strings.TrimPrefix(name, "models/"))
-	switch {
-	case strings.HasPrefix(n, "gemini-3"):
-		return "level"
-	case strings.HasPrefix(n, "gemini-2.5"):
-		return "budget"
-	}
-	return ""
+// supportsThinkingLevel reports whether the model takes a thinkingLevel (gemini-3.x).
+func supportsThinkingLevel(name string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimPrefix(name, "models/")), "gemini-3")
 }
 
 type thinkingConfig struct {
-	ThinkingLevel  string `json:"thinkingLevel,omitempty"`
-	ThinkingBudget *int   `json:"thinkingBudget,omitempty"`
+	ThinkingLevel string `json:"thinkingLevel,omitempty"`
 }
 
-// buildThinkingConfig maps an effort to the model family's thinking field.
-// Returns nil when effort is empty or the model has no thinking control.
+// buildThinkingConfig maps an effort to thinkingLevel. Returns nil when
+// effort is empty or the model has no thinking control.
 //
-// Gemini 3.x: thinkingLevel. Pro models and 3.8-flash lack "minimal", and
-// 3-pro lacks "medium"; those are clamped to the nearest supported level.
-// Gemini 2.5: thinkingBudget tokens; 2.5-pro cannot disable thinking, so
-// "minimal" is its 128-token floor.
+// Pro models and 3.8-flash lack "minimal", and 3-pro lacks "medium"; those
+// are clamped to the nearest supported level.
 func buildThinkingConfig(name, effort string) *thinkingConfig {
-	if effort == "" {
+	if effort == "" || !supportsThinkingLevel(name) {
 		return nil
 	}
 	n := strings.ToLower(strings.TrimPrefix(name, "models/"))
-	switch thinkingFamily(n) {
-	case "level":
-		level := effort
-		if effort == "minimal" && (strings.Contains(n, "-pro") || strings.HasPrefix(n, "gemini-3.8-flash")) {
-			level = "low"
-		}
-		if effort == "medium" && strings.HasPrefix(n, "gemini-3-pro") {
-			level = "high"
-		}
-		return &thinkingConfig{ThinkingLevel: level}
-	case "budget":
-		pro := strings.Contains(n, "-pro")
-		b := 0
-		switch effort {
-		case "minimal":
-			if pro {
-				b = 128
-			}
-		case "low":
-			b = 1024
-		case "medium":
-			b = 8192
-		case "high":
-			b = 24576
-			if pro {
-				b = 32768
-			}
-		}
-		return &thinkingConfig{ThinkingBudget: &b}
+	level := effort
+	if effort == "minimal" && (strings.Contains(n, "-pro") || strings.HasPrefix(n, "gemini-3.8-flash")) {
+		level = "low"
 	}
-	return nil
+	if effort == "medium" && strings.HasPrefix(n, "gemini-3-pro") {
+		level = "high"
+	}
+	return &thinkingConfig{ThinkingLevel: level}
 }

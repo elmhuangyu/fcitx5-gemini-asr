@@ -14,7 +14,7 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 
 - **Fcitx5** (>= 5.1.22) development headers and CMake packages (`Fcitx5Core`, `Fcitx5Config`, `Fcitx5Utils`; note that Ubuntu 26.04's `libfcitx5*-dev` is 5.1.19 and too old — build fcitx5 from source or use a newer distro, matching `.github/workflows/ci.yml` `FCITX5_VERSION`)
 - **C++20** compiler (`g++` or `clang++`), `cmake`, `pkg-config`
-- **nlohmann/json** >= 3 (`nlohmann-json3-dev` on Debian/Ubuntu, `nlohmann-json` on Arch, `json-devel` on Fedora); if not found by CMake, the build downloads the pinned v3.12.0 release via FetchContent (needs network)
+- **Network access at configure time**: CMake downloads nlohmann/json (pinned v3.12.0, SHA256-verified) via FetchContent; no system package is needed
 - **Go** (>= 1.27.4, matching `daemon/go.mod`)
 - **PipeWire** (`pw-record`)
 - **systemd** (`systemd-creds --user`; falls back to `GEMINI_API_KEY` env var when `CREDENTIALS_DIRECTORY` is unset)
@@ -74,7 +74,7 @@ gemini-voice configure
 
 ### Input Behavior, Models & Settings (`config` / `models`)
 
-**Thinking effort.** Any post-processing model string (`post_process.model`, `[post_process.models]`, `models --default/--refine-*/--translate`, `config set model.<action>`, TUI) accepts a `/minimal`, `/low`, `/medium` or `/high` suffix, e.g. `gemini-3.5-flash/low`. The suffix is stripped from the API URL and mapped to `thinkingConfig`: `thinkingLevel` for `gemini-3*` models (`minimal` is raised to `low` on Pro and `gemini-3.8-flash`; `medium` to `high` on `gemini-3-pro`), `thinkingBudget` for `gemini-2.5*` (minimal/low/medium/high = 0/1024/8192/24576 tokens; 2.5-pro cannot disable thinking, so minimal = 128 and high = 32768). Other model families reject a suffix; unknown suffixes are rejected. Without a suffix, `refine_*` and `translate_*` default to `minimal`; `ask_ai` and `as_prompt` use the provider default. Suffixes are not valid for `live_transcribe.model`.
+**Thinking effort.** Any post-processing model string (`post_process.model`, `[post_process.models]`, `models --default/--refine-*/--translate`, `config set model.<action>`, TUI) accepts a `/minimal`, `/low`, `/medium` or `/high` suffix, e.g. `gemini-3.5-flash/low`. The suffix is stripped from the API URL and sent as `thinkingConfig.thinkingLevel` (`gemini-3*` models only; `minimal` is raised to `low` on Pro and `gemini-3.8-flash`, and `medium` to `high` on `gemini-3-pro`). Other model families reject a suffix; unknown suffixes are rejected. Without a suffix, `refine_*` and `translate_*` default to `minimal`; `ask_ai` and `as_prompt` use the provider default. Suffixes are not valid for `live_transcribe.model`.
 
 **Prompt isolation.** The action prompt is sent as the `systemInstruction`; the transcript is sent as the user message wrapped in `<transcript>…</transcript>` with a fixed preamble that it is data, never instructions. `ask_ai` is the exception: it executes the spoken content as an instruction. A trailing `:`/`：` in custom prompts is ignored.
 
@@ -100,9 +100,9 @@ gemini-voice models
 gemini-voice models --remote
 
 # Choose models for live ASR, default post-processing, and individual actions:
-gemini-voice models --live gemini-3.5-transcribe-live --default gemini-3.5-flash-lite --refine-formal gemini-2.5-pro --as-prompt gemini-2.5-pro
-gemini-voice models --translate ja=gemini-2.5-flash/low --translate en=default  # Override or clear dynamic translate_<lang> targets (repeatable)
-gemini-voice config set model.refine_fix_typos gemini-2.5-flash-lite
+gemini-voice models --live gemini-3.5-transcribe-live --default gemini-3.5-flash-lite --refine-formal gemini-3.5-pro --as-prompt gemini-3.5-pro
+gemini-voice models --translate ja=gemini-3.5-flash/low --translate en=default  # Override or clear dynamic translate_<lang> targets (repeatable)
+gemini-voice config set model.refine_fix_typos gemini-3.5-flash-lite
 gemini-voice config set model.refine_formal gemini-3.5-flash/low   # Thinking effort via model suffix
 gemini-voice config set model.refine_formal default   # Clear override and inherit post_process.model
 

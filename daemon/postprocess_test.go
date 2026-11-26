@@ -266,8 +266,8 @@ func TestPostProcessor_ThinkingEffort(t *testing.T) {
 	cfg.Connection.APIBaseURL = srv.URL
 	cfg.PostProcess.Model = "gemini-3.5-flash"
 	cfg.PostProcess.Models = map[string]string{
-		"refine_formal": "gemini-2.5-pro/high",
-		"translate_en":  "gemini-2.5-flash",
+		"refine_formal": "gemini-3-pro-preview/high",
+		"translate_en":  "gemini-3.5-flash-lite",
 		"as_prompt":     "gemini-3.5-flash/medium",
 	}
 	pp := NewPostProcessor()
@@ -280,14 +280,14 @@ func TestPostProcessor_ThinkingEffort(t *testing.T) {
 	if tc(0) == nil || tc(0).ThinkingLevel != "minimal" {
 		t.Fatalf("refine_fix_typos default: %+v", tc(0))
 	}
-	if tc(1) == nil || tc(1).ThinkingBudget == nil || *tc(1).ThinkingBudget != 32768 {
-		t.Fatalf("2.5-pro/high: %+v", tc(1))
+	if tc(1) == nil || tc(1).ThinkingLevel != "high" {
+		t.Fatalf("3-pro/high: %+v", tc(1))
 	}
-	if paths[1] != "/v1beta/models/gemini-2.5-pro:generateContent" {
+	if paths[1] != "/v1beta/models/gemini-3-pro-preview:generateContent" {
 		t.Fatalf("suffix leaked into URL: %q", paths[1])
 	}
-	if tc(2) == nil || tc(2).ThinkingBudget == nil || *tc(2).ThinkingBudget != 0 {
-		t.Fatalf("2.5-flash translate default: %+v", tc(2))
+	if tc(2) == nil || tc(2).ThinkingLevel != "minimal" {
+		t.Fatalf("3.5-flash-lite translate default: %+v", tc(2))
 	}
 	if tc(3) == nil || tc(3).ThinkingLevel != "medium" || paths[3] != "/v1beta/models/gemini-3.5-flash:generateContent" {
 		t.Fatalf("as_prompt: %+v %q", tc(3), paths[3])
@@ -302,7 +302,7 @@ func TestParseModelSpecAndMapping(t *testing.T) {
 	if err != nil || ms.Name != "gemini-3.5-flash" || ms.Effort != "low" {
 		t.Fatalf("got %+v %v", ms, err)
 	}
-	for _, bad := range []string{"gemini-3.5-flash/foo", "/low", "gemini-2.0-flash/low", "gemini-3.5-flash/"} {
+	for _, bad := range []string{"gemini-3.5-flash/foo", "/low", "gemini-2.0-flash/low", "gemini-2.5-flash/low", "gemini-3.5-flash/"} {
 		if _, err := ParseModelSpec(bad); err == nil {
 			t.Fatalf("expected error for %q", bad)
 		}
@@ -313,8 +313,8 @@ func TestParseModelSpecAndMapping(t *testing.T) {
 	if c := buildThinkingConfig("gemini-3-pro-preview", "minimal"); c.ThinkingLevel != "low" {
 		t.Fatalf("pro minimal -> %+v", c)
 	}
-	if c := buildThinkingConfig("gemini-2.5-pro", "minimal"); *c.ThinkingBudget != 128 {
-		t.Fatalf("2.5 pro minimal -> %d", *c.ThinkingBudget)
+	if buildThinkingConfig("gemini-2.5-pro", "minimal") != nil {
+		t.Fatal("gemini-2.5 must have no thinking config")
 	}
 	if buildThinkingConfig("gemma-3", "low") != nil {
 		t.Fatal("unsupported family must have no config")
