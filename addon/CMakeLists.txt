@@ -9,6 +9,12 @@ option(ENABLE_TEST "Enable unit and integration tests" ON)
 
 add_fcitx5_addon(gemini-voice
     engine.cpp
+    engine_daemon.cpp
+    engine_keys.cpp
+    engine_menus.cpp
+    engine_panel.cpp
+    engine_targets.cpp
+    engine_text.cpp
     factory.cpp
     json_util.cpp
     socket_client.cpp
