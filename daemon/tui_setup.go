@@ -174,7 +174,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 			huh.NewInput().
 				Title("Default post-processing model").
 				Description("Used for Refine / Translate / Ask AI unless overridden per action.").
-				Suggestions([]string{DefaultPostProcessModel, "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"}).
+				Suggestions([]string{DefaultPostProcessModel, "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-4-hydrogen"}).
 				Value(&state.postProcessModel).
 				Validate(func(s string) error {
 					if err := validateNonEmpty("post_process.model")(s); err != nil {
@@ -199,7 +199,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 			huh.NewInput().
 				Title(action).
 				Placeholder("default (inherit "+state.postProcessModel+")").
-				Suggestions([]string{DefaultPostProcessModel, "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.1-pro-preview"}).
+				Suggestions([]string{DefaultPostProcessModel, "gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-4-hydrogen"}).
 				Value(&state.actionOverrides[idx]).
 				Validate(func(s string) error {
 					t := strings.TrimSpace(s)
