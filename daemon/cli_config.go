@@ -57,8 +57,7 @@ Common keys for "config get" / "config set":
   live.language                Transcription language (e.g. auto, cmn-Hans-CN, en-US, cmn-Hans-CN,en-US)
   live.mode                    Live transcription mode (VERBATIM | SMART)
   live.custom_vocabulary       Comma-separated terms to bias recognition (or "none")
-  live.vad_silence_ms          Silence timeout in ms (0 disables auto-stop)
-  live.vad_threshold           RMS energy threshold for speech detection
+  live.vad_silence_ms          Server-side VAD silence timeout in ms (0 disables auto-stop)
   post_process.model           Default post-processing model
   post_process.prefetch        Comma-separated actions to prefetch (or "none")
   model.<action>               Per-action model override ("default" clears override)
@@ -153,7 +152,6 @@ func printConfigSummary(w io.Writer, configPath string, cfg Config, fcitxPath st
 	_, _ = fmt.Fprintf(w, "  live.mode:                %s\n", cfg.LiveTranscribe.Mode)
 	_, _ = fmt.Fprintf(w, "  live.custom_vocabulary:   %s\n", vocabVal)
 	_, _ = fmt.Fprintf(w, "  live.vad_silence_ms:      %d\n", cfg.LiveTranscribe.VADSilenceMs)
-	_, _ = fmt.Fprintf(w, "  live.vad_threshold:       %.0f\n", cfg.LiveTranscribe.VADThreshold)
 	_, _ = fmt.Fprintf(w, "  post_process.model:       %s\n", cfg.PostProcess.Model)
 	_, _ = fmt.Fprintf(w, "  post_process.prefetch:    %s\n", prefetchVal)
 	_, _ = fmt.Fprintf(w, "  post_process.translate_languages: %s\n", translateVal)

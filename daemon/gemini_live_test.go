@@ -69,6 +69,39 @@ func (s *sliceAudioSource) Close() error {
 	return nil
 }
 
+// isStreamEnd reports whether a realtimeInput frame ends the audio stream
+// (audioStreamEnd with server VAD, activityEnd with manual activity control).
+func isStreamEnd(ri map[string]any) bool {
+	if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+		return true
+	}
+	_, ok := ri["activityEnd"]
+	return ok
+}
+
+func TestResolveLiveEndpoint(t *testing.T) {
+	cases := []struct {
+		in, base, ver string
+		wantErr       bool
+	}{
+		{"", "https://generativelanguage.googleapis.com", "v1beta", false},
+		{"wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent", "wss://generativelanguage.googleapis.com", "v1beta", false},
+		{"wss://proxy.example.com/prefix/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=abc", "wss://proxy.example.com/prefix", "v1alpha", false},
+		{"ws://127.0.0.1:8080", "ws://127.0.0.1:8080", "v1beta", false},
+		{"ws://127.0.0.1:8080/", "ws://127.0.0.1:8080", "v1beta", false},
+		{"not a url", "", "", true},
+	}
+	for _, tc := range cases {
+		base, ver, err := resolveLiveEndpoint(tc.in)
+		if (err != nil) != tc.wantErr {
+			t.Fatalf("resolveLiveEndpoint(%q) err = %v, wantErr %v", tc.in, err, tc.wantErr)
+		}
+		if base != tc.base || ver != tc.ver {
+			t.Fatalf("resolveLiveEndpoint(%q) = (%q, %q), want (%q, %q)", tc.in, base, ver, tc.base, tc.ver)
+		}
+	}
+}
+
 func TestNormalizeLanguageCodes(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -118,7 +151,10 @@ func TestGeminiLiveClient_TranscribeLiveVerbatim(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
-		gotAPIKey = r.URL.Query().Get("key")
+		gotAPIKey = r.Header.Get("x-goog-api-key")
+		if r.URL.Query().Has("key") {
+			gotAPIKey += "+query-key-leak"
+		}
 		mu.Unlock()
 
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -202,7 +238,7 @@ func TestGeminiLiveClient_TranscribeLiveVerbatim(t *testing.T) {
 						}
 					}
 				}
-				if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+				if isStreamEnd(ri) {
 					mu.Lock()
 					gotStreamEnd = true
 					mu.Unlock()
@@ -376,7 +412,7 @@ func TestGeminiLiveClient_TranscribeLiveSmartMode(t *testing.T) {
 						},
 					})
 				}
-				if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+				if isStreamEnd(ri) {
 					finalText := "Hello. World."
 					if clearAtEnd {
 						finalText = ""
@@ -455,9 +491,10 @@ func TestGeminiLiveClient_TranscribeLiveSmartMode(t *testing.T) {
 		if iat["mode"] != "SMART" {
 			t.Fatalf("mode = %v, want SMART", iat["mode"])
 		}
-		lc, ok := iat["languageCodes"].([]any)
-		if !ok || len(lc) != 0 {
-			t.Fatalf("languageCodes = %#v, want empty non-nil array []", iat["languageCodes"])
+		// The genai SDK omits empty languageCodes (omitempty); the API treats
+		// absent/empty identically as automatic language detection.
+		if lc, _ := iat["languageCodes"].([]any); len(lc) != 0 {
+			t.Fatalf("languageCodes = %#v, want absent/empty", iat["languageCodes"])
 		}
 	})
 
@@ -495,7 +532,7 @@ func TestGeminiLiveClient_TranscribeLiveFinalizeScenarios(t *testing.T) {
 					continue
 				}
 				if ri, ok := msg["realtimeInput"].(map[string]any); ok {
-					if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+					if isStreamEnd(ri) {
 						_ = conn.WriteJSON(map[string]any{
 							"serverContent": map[string]any{
 								"turnComplete": true,
@@ -563,7 +600,7 @@ func TestGeminiLiveClient_TranscribeLiveFinalizeScenarios(t *testing.T) {
 					continue
 				}
 				if ri, ok := msg["realtimeInput"].(map[string]any); ok {
-					if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+					if isStreamEnd(ri) {
 						_ = conn.WriteJSON(map[string]any{
 							"serverContent": map[string]any{
 								"inputTranscription": map[string]any{"text": "只有终稿没有turnComplete"},
@@ -655,7 +692,7 @@ func TestGeminiLiveClient_TranscribeLiveFinalizeScenarios(t *testing.T) {
 							},
 						})
 					}
-					if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+					if isStreamEnd(ri) {
 						// Server VAD already finalized before stop; stay silent.
 						for {
 							if _, _, rErr := conn.ReadMessage(); rErr != nil {
@@ -737,7 +774,7 @@ func TestGeminiLiveClient_TranscribeLiveFinalizeScenarios(t *testing.T) {
 							},
 						})
 					}
-					if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+					if isStreamEnd(ri) {
 						_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 						return
 					}
@@ -850,7 +887,7 @@ func TestGeminiLiveClient_GeneralLiveModelFallback(t *testing.T) {
 						})
 					}
 				}
-				if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+				if isStreamEnd(ri) {
 					mu.Lock()
 					gotStreamEnd = true
 					mu.Unlock()
@@ -1161,7 +1198,7 @@ func TestGeminiLiveClient_PreRollBuffersAudioDuringSlowConnect(t *testing.T) {
 					mu.Unlock()
 				}
 			}
-			if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+			if isStreamEnd(ri) {
 				mu.Lock()
 				gotStreamEnd = true
 				mu.Unlock()
@@ -1228,10 +1265,10 @@ func TestGeminiLiveClient_PreRollBuffersAudioDuringSlowConnect(t *testing.T) {
 }
 
 func TestGeminiLiveClient_VADAutoStopDrainsBufferedTailAudio(t *testing.T) {
-	// One speech chunk followed by silence: with VADSilenceMs=300 the VAD
-	// triggers on the 3rd silent chunk (4th overall), so the last two chunks
-	// are still sitting in the BufferedAudioSource queue and must be drained
-	// to the WebSocket before audioStreamEnd.
+	// The server reports end-of-speech (voiceActivity ACTIVITY_END) as soon as
+	// it sees the first chunk, while the remaining chunks are still sitting in
+	// the BufferedAudioSource queue. They must be drained to the WebSocket
+	// before audioStreamEnd.
 	chunks := [][]byte{makePCMChunk(800, ChunkBytes)}
 	for i := 0; i < 5; i++ {
 		chunks = append(chunks, makePCMChunk(0, ChunkBytes))
@@ -1282,10 +1319,14 @@ func TestGeminiLiveClient_VADAutoStopDrainsBufferedTailAudio(t *testing.T) {
 				if decErr == nil {
 					mu.Lock()
 					gotAudioPayloads = append(gotAudioPayloads, decoded)
+					n := len(gotAudioPayloads)
 					mu.Unlock()
+					if n == 1 {
+						_ = conn.WriteJSON(map[string]any{"voiceActivity": map[string]any{"voiceActivityType": "ACTIVITY_END"}})
+					}
 				}
 			}
-			if end, ok := ri["audioStreamEnd"].(bool); ok && end {
+			if isStreamEnd(ri) {
 				mu.Lock()
 				gotStreamEnd = true
 				payloadsAtEnd = len(gotAudioPayloads)
@@ -1302,7 +1343,7 @@ func TestGeminiLiveClient_VADAutoStopDrainsBufferedTailAudio(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	// stopCh never closes: the session must end via VAD auto-stop alone.
+	// stopCh never closes: the session must end via server VAD auto-stop alone.
 	stopCh := make(chan struct{})
 
 	client := NewGeminiLiveClient()

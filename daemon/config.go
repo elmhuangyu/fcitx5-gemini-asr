@@ -24,7 +24,6 @@ import (
 )
 
 const (
-	DefaultVADThreshold     = 300.0
 	DefaultLiveModel        = "gemini-3.5-transcribe-live"
 	DefaultPostProcessModel = "gemini-3.5-flash-lite"
 	DefaultLiveLanguage     = "auto"
@@ -63,7 +62,6 @@ type LiveTranscribeConfig struct {
 	Mode             string   `toml:"mode,omitempty"`
 	CustomVocabulary []string `toml:"custom_vocabulary,omitempty"`
 	VADSilenceMs     int      `toml:"vad_silence_ms"`
-	VADThreshold     float64  `toml:"vad_threshold,omitempty"`
 }
 
 type TranslateTarget struct {
@@ -90,7 +88,6 @@ func DefaultConfig() Config {
 			Language:     DefaultLiveLanguage,
 			Mode:         DefaultLiveMode,
 			VADSilenceMs: 1200,
-			VADThreshold: DefaultVADThreshold,
 		},
 		PostProcess: PostProcessConfig{
 			Model:              DefaultPostProcessModel,
@@ -120,7 +117,7 @@ model = "gemini-3.5-transcribe-live"
 language = "auto" # "auto" (85+ languages & code-switching), or comma-separated BCP-47 (e.g. "cmn-Hans-CN,en-US"; "zh-CN" aliases to "cmn-Hans-CN")
 mode = "VERBATIM"        # "VERBATIM" (literal) or "SMART" (disfluency cleanup & formatting)
 # custom_vocabulary = ["Fcitx5", "PipeWire", "Gemini"]
-vad_silence_ms = 1200
+vad_silence_ms = 1200 # server-side VAD trailing silence before auto-stop (0 disables)
 
 [post_process]
 model = "gemini-3.5-flash-lite"
@@ -485,9 +482,6 @@ func LoadConfigFile(path string) (Config, error) {
 	cfg.LiveTranscribe.CustomVocabulary = pruneCustomVocabulary(cfg.LiveTranscribe.CustomVocabulary)
 	if len(cfg.LiveTranscribe.CustomVocabulary) > MaxCustomVocabulary {
 		return Config{}, fmt.Errorf("live_transcribe.custom_vocabulary has %d entries (max %d)", len(cfg.LiveTranscribe.CustomVocabulary), MaxCustomVocabulary)
-	}
-	if cfg.LiveTranscribe.VADThreshold <= 0 {
-		cfg.LiveTranscribe.VADThreshold = DefaultVADThreshold
 	}
 	if strings.TrimSpace(cfg.PostProcess.Model) == "" {
 		cfg.PostProcess.Model = DefaultPostProcessModel

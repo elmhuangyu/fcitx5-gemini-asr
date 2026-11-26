@@ -3,11 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os/exec"
 	"sync"
 	"sync/atomic"
@@ -339,59 +337,4 @@ func (p *PipeWireCapture) Close() error {
 		return nil
 	}
 	return retErr
-}
-
-// ComputeRMS returns the Root Mean Square amplitude of little-endian 16-bit signed PCM audio.
-func ComputeRMS(pcm []byte) float64 {
-	numSamples := len(pcm) / BytesPerSample
-	if numSamples == 0 {
-		return 0
-	}
-	var sum float64
-	for i := 0; i+1 < len(pcm); i += BytesPerSample {
-		s := int16(binary.LittleEndian.Uint16(pcm[i : i+BytesPerSample]))
-		f := float64(s)
-		sum += f * f
-	}
-	return math.Sqrt(sum / float64(numSamples))
-}
-
-type VADDetector struct {
-	threshold      float64
-	silenceLimitMs int
-	hasSpeech      bool
-	silenceMs      int
-}
-
-func NewVADDetector(threshold float64, silenceLimitMs int) *VADDetector {
-	if threshold <= 0 {
-		threshold = DefaultVADThreshold
-	}
-	return &VADDetector{
-		threshold:      threshold,
-		silenceLimitMs: silenceLimitMs,
-	}
-}
-
-func (v *VADDetector) Feed(pcm []byte) bool {
-	if v.silenceLimitMs <= 0 || len(pcm) < BytesPerSample {
-		return false
-	}
-	chunkMs := (len(pcm) * 1000) / (SampleRate * Channels * BytesPerSample)
-	if chunkMs <= 0 {
-		chunkMs = 1
-	}
-
-	if ComputeRMS(pcm) >= v.threshold {
-		v.hasSpeech = true
-		v.silenceMs = 0
-		return false
-	}
-
-	if !v.hasSpeech {
-		return false
-	}
-
-	v.silenceMs += chunkMs
-	return v.silenceMs >= v.silenceLimitMs
 }

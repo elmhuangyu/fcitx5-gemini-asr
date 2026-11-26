@@ -82,8 +82,6 @@ func getConfigKey(cfg Config, fcitxCfg FcitxAddonConfig, key string) (string, er
 		return strings.Join(cfg.LiveTranscribe.CustomVocabulary, ","), nil
 	case "live.vad_silence_ms", "live_transcribe.vad_silence_ms":
 		return strconv.Itoa(cfg.LiveTranscribe.VADSilenceMs), nil
-	case "live.vad_threshold", "live_transcribe.vad_threshold":
-		return strconv.FormatFloat(cfg.LiveTranscribe.VADThreshold, 'f', -1, 64), nil
 	case "post_process.model":
 		return cfg.PostProcess.Model, nil
 	case "post_process.prefetch":

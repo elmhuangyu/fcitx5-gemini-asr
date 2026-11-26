@@ -142,13 +142,6 @@ func setConfigKey(cfg *Config, fcitxCfg *FcitxAddonConfig, key, val string) (dae
 		}
 		cfg.LiveTranscribe.VADSilenceMs = ms
 		return true, false, nil
-	case "live.vad_threshold", "live_transcribe.vad_threshold":
-		th, convErr := strconv.ParseFloat(strings.TrimSpace(val), 64)
-		if convErr != nil || th <= 0 {
-			return false, false, fmt.Errorf("invalid vad_threshold %q (must be > 0)", val)
-		}
-		cfg.LiveTranscribe.VADThreshold = th
-		return true, false, nil
 	case "post_process.model":
 		trimmed := strings.TrimSpace(val)
 		if trimmed == "" {

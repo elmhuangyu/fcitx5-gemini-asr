@@ -352,7 +352,6 @@ func (cs *clientSession) handleStartRecording(reqLang string) {
 		Mode:             cfg.LiveTranscribe.Mode,
 		CustomVocabulary: cfg.LiveTranscribe.CustomVocabulary,
 		VADSilenceMs:     cfg.LiveTranscribe.VADSilenceMs,
-		VADThreshold:     cfg.LiveTranscribe.VADThreshold,
 	}
 
 	cs.wg.Add(1)

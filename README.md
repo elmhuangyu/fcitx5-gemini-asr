@@ -7,7 +7,7 @@ Real-time Linux voice input method built on **Fcitx5** and the **Gemini Live API
 ## Architecture
 
 - **Frontend (`addon/`)**: C++20 `fcitx::InputMethodEngineV2` plugin (`libgemini-voice.so`) communicating asynchronously over a Unix Domain Socket (`$XDG_RUNTIME_DIR/gemini-ime.sock`) using NDJSON and dispatching all UI updates to the Fcitx5 main loop via `EventDispatcher`.
-- **Backend & CLI (`daemon/`)**: Single Go binary (`gemini-voice-daemon` with CLI alias `gemini-voice`) that captures 16 kHz mono s16le PCM via PipeWire (`pw-record --raw`), streams audio over the Gemini Live API (`BidiGenerateContent`, defaulting to `gemini-3.5-transcribe-live` and configurable via `live_transcribe.model` / `gemini-voice models --live`), detects silence via RMS VAD, concurrently prefetches post-processing actions via `generateContent` (with per-action model overrides), hot-reloads `config.toml` via `fsnotify`, and provides an interactive TUI setup form, model routing, and `systemd-creds` credential management.
+- **Backend & CLI (`daemon/`)**: Single Go binary (`gemini-voice-daemon` with CLI alias `gemini-voice`) that captures 16 kHz mono s16le PCM via PipeWire (`pw-record --raw`), streams audio over the Gemini Live API (`BidiGenerateContent`, defaulting to `gemini-3.5-transcribe-live` and configurable via `live_transcribe.model` / `gemini-voice models --live`), relies on the Live API's server-side voice activity detection (`automaticActivityDetection`) to auto-stop on silence, uses the official `google.golang.org/genai` SDK, concurrently prefetches post-processing actions via `generateContent` (with per-action model overrides), hot-reloads `config.toml` via `fsnotify`, and provides an interactive TUI setup form, model routing, and `systemd-creds` credential management.
 - **Systemd & Config (`systemd/`)**: User service unit (`LoadCredentialEncrypted`) and TOML configuration template.
 
 ## Prerequisites
@@ -87,8 +87,7 @@ gemini-voice config set ime.trigger_key Alt+space
 gemini-voice config set live.language auto          # auto (85+ languages), or comma-separated hints like cmn-Hans-CN,en-US (zh-CN aliases to cmn-Hans-CN)
 gemini-voice config set live.mode VERBATIM          # VERBATIM (literal) or SMART (disfluency cleanup)
 gemini-voice config set live.custom_vocabulary Fcitx5,PipeWire,Gemini
-gemini-voice config set live.vad_silence_ms 1200       # Silence timeout in ms before auto-stop (0 disables auto-stop)
-gemini-voice config set live.vad_threshold 80          # RMS speech threshold (default 300; lower for quieter mics)
+gemini-voice config set live.vad_silence_ms 1200       # Server-side VAD trailing-silence timeout in ms before auto-stop (0 disables auto-stop)
 gemini-voice config set post_process.prefetch refine_fix_typos,refine_formal
 gemini-voice config set connection.proxy socks5://127.0.0.1:1080
 
@@ -176,7 +175,7 @@ Common recipes defined in `Justfile`:
 - **Daemon connection error**: Run `gemini-voice status` or `systemctl --user status gemini-voice.service` and confirm `$XDG_RUNTIME_DIR/gemini-ime.sock` exists (`0600`).
 - **Credential decryption failure**: Run `gemini-voice auth verify`; if `CREDENTIALS_DIRECTORY` is set by systemd, the encrypted credential file must exist and match the active host/user scope.
 - **No audio captured**: Verify `pw-record --raw --rate=16000 --channels=1 --format=s16 - > /dev/null` works with your PipeWire microphone source.
-- **Recording stops prematurely mid-sentence (or never auto-stops)**: Check `journalctl --user -u gemini-voice.service -n 20` for `live session vad auto-stop` and compare `peak_rms` against `threshold`. If your microphone level is quiet (e.g. `peak_rms` ~500 with default `threshold=300`), lower `live.vad_threshold` (e.g. `gemini-voice config set live.vad_threshold 80`) or increase `live.vad_silence_ms` (e.g. `2000`, or `0` to disable auto-stop). If room noise prevents auto-stop, raise `live.vad_threshold`.
+- **Recording stops prematurely mid-sentence (or never auto-stops)**: Auto-stop is driven by the Live API's server-side voice activity detection, using `live.vad_silence_ms` as the trailing-silence duration. Check `journalctl --user -u gemini-voice.service -n 20` for `live session server vad auto-stop`. Increase `live.vad_silence_ms` (e.g. `gemini-voice config set live.vad_silence_ms 2000`) if it cuts you off during pauses, or set it to `0` to disable automatic detection and stop manually. The old local `live.vad_threshold` setting has been removed; existing config files that still contain it are read without error and the value is ignored.
 
 ## License
 

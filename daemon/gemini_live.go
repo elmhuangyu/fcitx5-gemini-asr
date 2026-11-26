@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -16,10 +16,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
+	"google.golang.org/genai"
 )
 
 const (
-	DefaultLiveWSURL         = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+	// DefaultLiveBaseURL / DefaultLiveAPIVersion are what the genai SDK expands
+	// into wss://<host>/ws/google.ai.generativelanguage.<version>.GenerativeService.BidiGenerateContent.
+	DefaultLiveBaseURL       = "https://generativelanguage.googleapis.com"
+	DefaultLiveAPIVersion    = "v1beta"
 	DefaultSystemInstruction = "Verbatim speech-to-text transcriber. Output ONLY exact transcribed text with proper punctuation. Never answer questions or converse."
 )
 
@@ -31,8 +35,9 @@ type LiveSessionOptions struct {
 	Language         string
 	Mode             string
 	CustomVocabulary []string
-	VADSilenceMs     int
-	VADThreshold     float64
+	// VADSilenceMs drives server-side automatic activity detection
+	// (silenceDurationMs). 0 disables it and capture only ends on manual stop.
+	VADSilenceMs int
 }
 
 type LiveTranscriber interface {
@@ -51,83 +56,6 @@ func NewGeminiLiveClient() *GeminiLiveClient {
 		FinalizeTimeout:     5 * time.Second,
 		FinalizeGracePeriod: 300 * time.Millisecond,
 	}
-}
-
-type liveSetupMessage struct {
-	Setup liveSetupPayload `json:"setup"`
-}
-
-type liveSetupPayload struct {
-	Model                   string                        `json:"model"`
-	GenerationConfig        liveGenerationConfig          `json:"generationConfig"`
-	SystemInstruction       *liveSystemInstruction        `json:"systemInstruction,omitempty"`
-	InputAudioTranscription *liveAudioTranscriptionConfig `json:"inputAudioTranscription,omitempty"`
-}
-
-type liveGenerationConfig struct {
-	ResponseModalities []string `json:"responseModalities"`
-	Temperature        *float64 `json:"temperature,omitempty"`
-}
-
-type liveSystemInstruction struct {
-	Parts []liveTextPart `json:"parts"`
-}
-
-type liveTextPart struct {
-	Text string `json:"text"`
-}
-
-type liveAudioTranscriptionConfig struct {
-	LanguageCodes    []string `json:"languageCodes"`
-	CustomVocabulary []string `json:"customVocabulary,omitempty"`
-	Mode             string   `json:"mode,omitempty"`
-}
-
-type liveRealtimeInputMessage struct {
-	RealtimeInput liveRealtimeInputPayload `json:"realtimeInput"`
-}
-
-type liveRealtimeInputPayload struct {
-	Audio          *liveBlob `json:"audio,omitempty"`
-	AudioStreamEnd bool      `json:"audioStreamEnd,omitempty"`
-}
-
-type liveBlob struct {
-	MimeType string `json:"mimeType"`
-	Data     string `json:"data"`
-}
-
-type liveClientContentMessage struct {
-	ClientContent liveClientContentPayload `json:"clientContent"`
-}
-
-type liveClientContentPayload struct {
-	TurnComplete bool `json:"turnComplete"`
-}
-
-type liveTranscription struct {
-	Text string `json:"text"`
-}
-
-type liveServerMessage struct {
-	SetupComplete json.RawMessage `json:"setupComplete"`
-	ServerContent *struct {
-		ModelTurn *struct {
-			Parts []struct {
-				Text    string `json:"text"`
-				Thought bool   `json:"thought"`
-			} `json:"parts"`
-		} `json:"modelTurn"`
-		InterimInputTranscription *liveTranscription `json:"interimInputTranscription"`
-		InputTranscription        *liveTranscription `json:"inputTranscription"`
-		TurnComplete              bool               `json:"turnComplete"`
-		GenerationComplete        bool               `json:"generationComplete"`
-	} `json:"serverContent"`
-	Error *struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Status  string `json:"status"`
-	} `json:"error"`
 }
 
 var languageCodeAliases = map[string]string{
@@ -218,6 +146,165 @@ func notifySignal(ch chan struct{}) {
 	}
 }
 
+var liveWSPathRe = regexp.MustCompile(`/ws/google\.ai\.generativelanguage\.([A-Za-z0-9]+)\.GenerativeService\.BidiGenerateContent/?$`)
+
+// resolveLiveEndpoint turns connection.live_ws_url into the base URL and API
+// version the genai SDK needs. The SDK always appends
+// "/ws/google.ai.generativelanguage.<version>.GenerativeService.BidiGenerateContent"
+// itself, so a full endpoint URL has that suffix stripped and any other value
+// is treated as a base URL (scheme://host[/prefix]). Query strings are dropped:
+// the API key is sent in the x-goog-api-key header, never in the URL.
+func resolveLiveEndpoint(raw string) (baseURL, apiVersion string, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return DefaultLiveBaseURL, DefaultLiveAPIVersion, nil
+	}
+	u, perr := url.Parse(raw)
+	if perr != nil || u.Host == "" {
+		return "", "", fmt.Errorf("invalid Live WebSocket URL %q", RedactURL(raw))
+	}
+	apiVersion = DefaultLiveAPIVersion
+	p := u.Path
+	if m := liveWSPathRe.FindStringSubmatch(p); m != nil {
+		apiVersion = m[1]
+		p = liveWSPathRe.ReplaceAllString(p, "")
+	}
+	p = strings.TrimRight(p, "/")
+	return u.Scheme + "://" + u.Host + p, apiVersion, nil
+}
+
+// liveDialMu serialises genai Live connects: the SDK dials with the global
+// websocket.DefaultDialer and offers no per-client dialer hook, so we swap in
+// our proxy-aware dialer for the duration of the handshake.
+var liveDialMu sync.Mutex
+
+// rawConnTracker remembers the TCP connection opened by the dialer so a hung
+// connect/setup (which the SDK performs without context or deadlines) can be
+// aborted by closing it.
+type rawConnTracker struct {
+	mu     sync.Mutex
+	conn   net.Conn
+	closed bool
+}
+
+func (t *rawConnTracker) set(c net.Conn) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		_ = c.Close()
+		return
+	}
+	t.conn = c
+}
+
+func (t *rawConnTracker) abort() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.closed = true
+	if t.conn != nil {
+		_ = t.conn.Close()
+	}
+}
+
+type liveConnectResult struct {
+	session *genai.Session
+	err     error
+}
+
+func (c *GeminiLiveClient) connect(ctx context.Context, opts LiveSessionOptions, model string, cfg *genai.LiveConnectConfig) (*genai.Session, error) {
+	baseURL, apiVersion, err := resolveLiveEndpoint(opts.LiveWSURL)
+	if err != nil {
+		return nil, err
+	}
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:      opts.APIKey,
+		Backend:     genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{BaseURL: baseURL, APIVersion: apiVersion},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create Gemini Live client: %s", SanitizeError(err, opts.APIKey))
+	}
+
+	setupTimeout := c.SetupTimeout
+	if setupTimeout <= 0 {
+		setupTimeout = 10 * time.Second
+	}
+	const handshakeTimeout = 10 * time.Second
+
+	tracker := &rawConnTracker{}
+	resCh := make(chan liveConnectResult, 1)
+	go func() {
+		liveDialMu.Lock()
+		defer liveDialMu.Unlock()
+		dialer, derr := BuildWSDialer(opts.Proxy)
+		if derr != nil {
+			resCh <- liveConnectResult{err: derr}
+			return
+		}
+		dialer.HandshakeTimeout = handshakeTimeout
+		base := dialer.NetDialContext
+		if base == nil {
+			base = (&net.Dialer{Timeout: handshakeTimeout}).DialContext
+		}
+		dialer.NetDialContext = func(dctx context.Context, network, addr string) (net.Conn, error) {
+			conn, cerr := base(dctx, network, addr)
+			if cerr == nil {
+				tracker.set(conn)
+			}
+			return conn, cerr
+		}
+		orig := websocket.DefaultDialer
+		websocket.DefaultDialer = dialer
+		defer func() { websocket.DefaultDialer = orig }()
+
+		s, cerr := client.Live.Connect(ctx, model, cfg)
+		resCh <- liveConnectResult{session: s, err: cerr}
+	}()
+
+	timer := time.NewTimer(handshakeTimeout + setupTimeout)
+	defer timer.Stop()
+	abandon := func() {
+		tracker.abort()
+		go func() {
+			if r := <-resCh; r.session != nil {
+				_ = r.session.Close()
+			}
+		}()
+	}
+	select {
+	case r := <-resCh:
+		if r.err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("connect Gemini Live: %s", SanitizeError(r.err, opts.APIKey))
+		}
+		return r.session, nil
+	case <-ctx.Done():
+		abandon()
+		return nil, ctx.Err()
+	case <-timer.C:
+		abandon()
+		return nil, errors.New("connect Gemini Live: timed out awaiting setupComplete")
+	}
+}
+
+// isEndOfSpeechSignal reports whether a server message marks the end of a
+// detected user utterance.
+func isEndOfSpeechSignal(msg *genai.LiveServerMessage) bool {
+	if msg.VoiceActivity != nil && msg.VoiceActivity.VoiceActivityType == genai.VoiceActivityTypeActivityEnd {
+		return true
+	}
+	return msg.VoiceActivityDetectionSignal != nil && msg.VoiceActivityDetectionSignal.VADSignalType == genai.VADSignalTypeEos
+}
+
+func isStartOfSpeechSignal(msg *genai.LiveServerMessage) bool {
+	if msg.VoiceActivity != nil && msg.VoiceActivity.VoiceActivityType == genai.VoiceActivityTypeActivityStart {
+		return true
+	}
+	return msg.VoiceActivityDetectionSignal != nil && msg.VoiceActivityDetectionSignal.VADSignalType == genai.VADSignalTypeSos
+}
+
 func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-chan struct{}, opts LiveSessionOptions, onPartial func(string)) (string, error) {
 	if audio == nil {
 		return "", errors.New("audio source is nil")
@@ -231,23 +318,8 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 	if len(vocab) > MaxCustomVocabulary {
 		return "", fmt.Errorf("custom_vocabulary has %d entries (max %d)", len(vocab), MaxCustomVocabulary)
 	}
-
-	rawWSURL := strings.TrimSpace(opts.LiveWSURL)
-	if rawWSURL == "" {
-		rawWSURL = DefaultLiveWSURL
-	}
-	u, err := url.Parse(rawWSURL)
-	if err != nil {
-		return "", fmt.Errorf("invalid Live WebSocket URL %q: %s", RedactURL(rawWSURL), SanitizeError(err, opts.APIKey))
-	}
-	q := u.Query()
-	q.Set("key", opts.APIKey)
-	u.RawQuery = q.Encode()
-	wsURL := u.String()
-
-	dialer, err := BuildWSDialer(opts.Proxy)
-	if err != nil {
-		return "", err
+	if _, _, err := resolveLiveEndpoint(opts.LiveWSURL); err != nil {
+		return "", errors.New(SanitizeError(err, opts.APIKey))
 	}
 
 	bufferedAudio := NewBufferedAudioSource(audio, DefaultPreRollMaxChunks)
@@ -276,23 +348,61 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		<-stopWatcherDone
 	}()
 
-	conn, resp, err := dialer.DialContext(ctx, wsURL, nil)
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
+	model := strings.TrimSpace(opts.Model)
+	if model == "" {
+		model = DefaultLiveModel
 	}
+	if !strings.HasPrefix(model, "models/") {
+		model = "models/" + model
+	}
+
+	isTranscribe := isTranscribeLiveModel(model)
+	langCodes := NormalizeLanguageCodes(opts.Language)
+
+	// Server-side VAD: vad_silence_ms > 0 enables automatic activity detection
+	// with that trailing-silence duration; 0 disables it (manual stop only, the
+	// client then brackets the audio with activityStart/activityEnd).
+	serverVAD := opts.VADSilenceMs > 0
+	aad := &genai.AutomaticActivityDetection{Disabled: !serverVAD}
+	if serverVAD {
+		aad.SilenceDurationMs = genai.Ptr(int32(opts.VADSilenceMs))
+		aad.StartOfSpeechSensitivity = genai.StartSensitivityHigh
+		aad.EndOfSpeechSensitivity = genai.EndSensitivityHigh
+	}
+
+	liveCfg := &genai.LiveConnectConfig{
+		ResponseModalities: []genai.Modality{genai.ModalityText},
+		InputAudioTranscription: &genai.AudioTranscriptionConfig{
+			LanguageCodes:    langCodes,
+			CustomVocabulary: vocab,
+		},
+		RealtimeInputConfig: &genai.RealtimeInputConfig{AutomaticActivityDetection: aad},
+	}
+	if isTranscribe {
+		liveCfg.InputAudioTranscription.Mode = genai.AudioTranscriptionConfigMode(mode)
+	} else {
+		liveCfg.Temperature = genai.Ptr(float32(0))
+		instruction := DefaultSystemInstruction
+		if len(langCodes) > 0 {
+			instruction += " Primary language: " + strings.Join(langCodes, ", ") + "."
+		}
+		liveCfg.SystemInstruction = genai.NewContentFromText(instruction, genai.RoleUser)
+	}
+
+	session, err := c.connect(ctx, opts, model, liveCfg)
 	if err != nil {
-		return "", fmt.Errorf("connect Gemini Live (%s): %s", RedactURL(wsURL), SanitizeError(err, opts.APIKey))
+		return "", err
 	}
 
 	var closeConnOnce sync.Once
 	closeConn := func() {
 		closeConnOnce.Do(func() {
-			_ = conn.Close()
+			_ = session.Close()
 		})
 	}
 	defer closeConn()
 
-	// Ensure context cancellation immediately unblocks WebSocket ReadMessage.
+	// Ensure context cancellation immediately unblocks session.Receive.
 	connWatcherDone := make(chan struct{})
 	go func() {
 		defer close(connWatcherDone)
@@ -307,78 +417,12 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		<-connWatcherDone
 	}()
 
-	model := strings.TrimSpace(opts.Model)
-	if model == "" {
-		model = DefaultLiveModel
-	}
-	if !strings.HasPrefix(model, "models/") {
-		model = "models/" + model
-	}
-
-	isTranscribe := isTranscribeLiveModel(model)
-	langCodes := NormalizeLanguageCodes(opts.Language)
-
 	var writeMu sync.Mutex
-	writeJSON := func(v any) error {
+	send := func(in genai.LiveRealtimeInput) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		return conn.WriteJSON(v)
+		return session.SendRealtimeInput(in)
 	}
-
-	setupPayload := liveSetupPayload{
-		Model: model,
-		GenerationConfig: liveGenerationConfig{
-			ResponseModalities: []string{"TEXT"},
-		},
-		InputAudioTranscription: &liveAudioTranscriptionConfig{
-			LanguageCodes:    langCodes,
-			CustomVocabulary: vocab,
-		},
-	}
-	if isTranscribe {
-		setupPayload.InputAudioTranscription.Mode = mode
-	} else {
-		temp := 0.0
-		setupPayload.GenerationConfig.Temperature = &temp
-		instruction := DefaultSystemInstruction
-		if len(langCodes) > 0 {
-			instruction += " Primary language: " + strings.Join(langCodes, ", ") + "."
-		}
-		setupPayload.SystemInstruction = &liveSystemInstruction{
-			Parts: []liveTextPart{{Text: instruction}},
-		}
-	}
-
-	if err := writeJSON(liveSetupMessage{Setup: setupPayload}); err != nil {
-		return "", fmt.Errorf("send Gemini Live setup: %s", SanitizeError(err, opts.APIKey))
-	}
-
-	setupTimeout := c.SetupTimeout
-	if setupTimeout <= 0 {
-		setupTimeout = 10 * time.Second
-	}
-	_ = conn.SetReadDeadline(time.Now().Add(setupTimeout))
-	for {
-		_, payload, err := conn.ReadMessage()
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", ctx.Err()
-			}
-			return "", fmt.Errorf("await Gemini Live setupComplete: %s", SanitizeError(err, opts.APIKey))
-		}
-		var msg liveServerMessage
-		if err := json.Unmarshal(payload, &msg); err != nil {
-			continue
-		}
-		if msg.Error != nil {
-			return "", errors.New(SanitizeError(fmt.Errorf("gemini live error (%d %s): %s", msg.Error.Code, msg.Error.Status, msg.Error.Message), opts.APIKey))
-		}
-		if len(msg.SetupComplete) > 0 {
-			break
-		}
-	}
-	_ = conn.SetReadDeadline(time.Time{})
 
 	var (
 		textMu                sync.Mutex
@@ -395,33 +439,49 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		finalDoneCh           = make(chan struct{}, 1)
 		graceTriggerCh        = make(chan struct{}, 1)
 		readerDoneCh          = make(chan struct{})
+		serverVADStopOnce     sync.Once
+		serverVADStopped      bool
 	)
+	serverStop := func(reason string) {
+		serverVADStopOnce.Do(func() {
+			textMu.Lock()
+			serverVADStopped = true
+			textMu.Unlock()
+			log.Printf("live session server vad auto-stop (%s silence_ms=%d)", reason, opts.VADSilenceMs)
+			bufferedAudio.StopCapture()
+		})
+	}
 
 	go func() {
 		defer close(readerDoneCh)
 		for {
-			_, payload, err := conn.ReadMessage()
+			msg, err := session.Receive()
 			if err != nil {
 				textMu.Lock()
-				readerErr = err
+				if strings.HasPrefix(err.Error(), "received error in response") {
+					apiErr = errors.New(SanitizeError(fmt.Errorf("gemini live error: %w", err), opts.APIKey))
+				} else {
+					readerErr = err
+				}
 				textMu.Unlock()
 				return
 			}
-			var msg liveServerMessage
-			if err := json.Unmarshal(payload, &msg); err != nil {
-				continue
+
+			if serverVAD {
+				if isStartOfSpeechSignal(msg) {
+					textMu.Lock()
+					speechSinceLastFinal = true
+					textMu.Unlock()
+				}
+				if isEndOfSpeechSignal(msg) {
+					serverStop("activity_end")
+				}
 			}
-			if msg.Error != nil {
-				textMu.Lock()
-				apiErr = errors.New(SanitizeError(fmt.Errorf("gemini live error (%d %s): %s", msg.Error.Code, msg.Error.Status, msg.Error.Message), opts.APIKey))
-				textMu.Unlock()
-				return
-			}
-			if msg.ServerContent == nil {
+			sc := msg.ServerContent
+			if sc == nil {
 				continue
 			}
 
-			sc := msg.ServerContent
 			var (
 				gotFinal    bool
 				turnDone    = sc.TurnComplete || sc.GenerationComplete
@@ -429,6 +489,7 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 				emitPartial bool
 				shouldDone  bool
 				shouldGrace bool
+				heardSpeech bool
 			)
 
 			textMu.Lock()
@@ -436,6 +497,7 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 				interim = sc.InterimInputTranscription.Text
 				if interim != "" {
 					speechSinceLastFinal = true
+					heardSpeech = true
 				}
 			}
 			if sc.InputTranscription != nil {
@@ -444,6 +506,9 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 				speechSinceLastFinal = false
 				gotFinal = true
 				text := sc.InputTranscription.Text
+				if text != "" {
+					heardSpeech = true
+				}
 				if isTranscribe && mode == "SMART" {
 					committed = text
 				} else if text != "" {
@@ -453,13 +518,14 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 			if sc.ModelTurn != nil && !sawInputTranscription && sc.InputTranscription == nil && sc.InterimInputTranscription == nil {
 				var modelDelta strings.Builder
 				for _, part := range sc.ModelTurn.Parts {
-					if part.Thought || part.Text == "" {
+					if part == nil || part.Thought || part.Text == "" {
 						continue
 					}
 					modelDelta.WriteString(part.Text)
 				}
 				if modelDelta.Len() > 0 {
 					committed += modelDelta.String()
+					heardSpeech = true
 				}
 			}
 
@@ -469,6 +535,11 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 				snapshot = curSnapshot
 				emitPartial = true
 			}
+
+			// Fallback end-of-speech signal: if the server never sends explicit
+			// activity events, the end of the server-detected turn (turnComplete /
+			// generationComplete) after we have heard speech also ends capture.
+			serverTurnEnded := serverVAD && !awaitingFinalTurn && turnDone && (heardSpeech || committed != "")
 
 			if awaitingFinalTurn {
 				if gotFinal {
@@ -500,6 +571,9 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 			if emitPartial && onPartial != nil && ctx.Err() == nil {
 				onPartial(snapshot)
 			}
+			if serverTurnEnded {
+				serverStop("turn_complete")
+			}
 			if shouldDone {
 				notifySignal(finalDoneCh)
 			} else if shouldGrace {
@@ -512,24 +586,18 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 		<-readerDoneCh
 	}()
 
-	vadThreshold := opts.VADThreshold
-	if vadThreshold <= 0 {
-		vadThreshold = DefaultVADThreshold
-	}
-	vad := NewVADDetector(vadThreshold, opts.VADSilenceMs)
-	log.Printf("live session started (model=%s vad_silence_ms=%d vad_threshold=%.1f)", model, opts.VADSilenceMs, vadThreshold)
+	log.Printf("live session started (model=%s vad_silence_ms=%d server_vad=%t)", model, opts.VADSilenceMs, serverVAD)
 	var (
-		sendErr      error
-		sentAudio    bool
-		vadTriggered bool
-		chunksSent   int
-		peakRMS      float64
-		stopReason   = "unknown"
+		sendErr    error
+		sentAudio  bool
+		chunksSent int
+		stopReason = "unknown"
 	)
+	mimeType := fmt.Sprintf("audio/pcm;rate=%d", SampleRate)
 
 	for {
 		if ctx.Err() != nil {
-			log.Printf("live session cancelled (chunks=%d peak_rms=%.1f)", chunksSent, peakRMS)
+			log.Printf("live session cancelled (chunks=%d)", chunksSent)
 			return "", ctx.Err()
 		}
 		select {
@@ -541,58 +609,45 @@ func (c *GeminiLiveClient) Run(ctx context.Context, audio AudioSource, stopCh <-
 
 		chunk, err := bufferedAudio.ReadChunkContext(ctx, readerDoneCh)
 		if ctx.Err() != nil {
-			log.Printf("live session cancelled (chunks=%d peak_rms=%.1f)", chunksSent, peakRMS)
+			log.Printf("live session cancelled (chunks=%d)", chunksSent)
 			return "", ctx.Err()
 		}
 		if len(chunk) > 0 {
-			frame := liveRealtimeInputMessage{
-				RealtimeInput: liveRealtimeInputPayload{
-					Audio: &liveBlob{
-						MimeType: fmt.Sprintf("audio/pcm;rate=%d", SampleRate),
-						Data:     base64.StdEncoding.EncodeToString(chunk),
-					},
-				},
+			if !sentAudio && !serverVAD {
+				if wErr := send(genai.LiveRealtimeInput{ActivityStart: &genai.ActivityStart{}}); wErr != nil {
+					sendErr = wErr
+					stopReason = "ws_write_err"
+					break
+				}
 			}
-			if wErr := writeJSON(frame); wErr != nil {
+			if wErr := send(genai.LiveRealtimeInput{Audio: &genai.Blob{MIMEType: mimeType, Data: chunk}}); wErr != nil {
 				sendErr = wErr
 				stopReason = "ws_write_err"
 				break
 			}
 			sentAudio = true
 			chunksSent++
-			rms := ComputeRMS(chunk)
-			if rms > peakRMS {
-				peakRMS = rms
-			}
-			if rms >= vadThreshold {
-				textMu.Lock()
-				speechSinceLastFinal = true
-				textMu.Unlock()
-			}
-			if !vadTriggered && vad.Feed(chunk) {
-				// VAD silence auto-stop: stop capturing new audio but keep
-				// looping so chunks already buffered are drained to the
-				// WebSocket before audioStreamEnd, matching the explicit
-				// stop (stopCh) path.
-				vadTriggered = true
-				stopReason = "vad_silence"
-				log.Printf("live session vad auto-stop (chunks=%d peak_rms=%.1f threshold=%.1f silence_ms=%d)", chunksSent, peakRMS, vadThreshold, opts.VADSilenceMs)
-				bufferedAudio.StopCapture()
-			}
 		}
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				sendErr = err
 				stopReason = "audio_err"
 			} else if stopReason == "unknown" {
-				stopReason = "stop_cmd_or_eof"
+				textMu.Lock()
+				vadStopped := serverVADStopped
+				textMu.Unlock()
+				if vadStopped {
+					stopReason = "server_vad"
+				} else {
+					stopReason = "stop_cmd_or_eof"
+				}
 			}
 			break
 		}
 	}
 
 finalize:
-	log.Printf("live session finalizing (reason=%s chunks=%d peak_rms=%.1f)", stopReason, chunksSent, peakRMS)
+	log.Printf("live session finalizing (reason=%s chunks=%d)", stopReason, chunksSent)
 	bufferedAudio.StopCapture()
 	if ctx.Err() != nil {
 		return "", ctx.Err()
@@ -612,19 +667,18 @@ finalize:
 		default:
 		}
 		if !readerClosed {
-			if wErr := writeJSON(liveRealtimeInputMessage{
-				RealtimeInput: liveRealtimeInputPayload{
-					AudioStreamEnd: true,
-				},
-			}); wErr != nil && sendErr == nil {
+			end := genai.LiveRealtimeInput{AudioStreamEnd: true}
+			if !serverVAD {
+				end = genai.LiveRealtimeInput{ActivityEnd: &genai.ActivityEnd{}}
+			}
+			if wErr := send(end); wErr != nil && sendErr == nil {
 				sendErr = wErr
 			}
 			if !isTranscribe {
-				if wErr := writeJSON(liveClientContentMessage{
-					ClientContent: liveClientContentPayload{
-						TurnComplete: true,
-					},
-				}); wErr != nil && sendErr == nil {
+				writeMu.Lock()
+				wErr := session.SendClientContent(genai.LiveClientContentInput{TurnComplete: genai.Ptr(true)})
+				writeMu.Unlock()
+				if wErr != nil && sendErr == nil {
 					sendErr = wErr
 				}
 			}
@@ -690,9 +744,6 @@ finalize:
 		}
 	}
 
-	writeMu.Lock()
-	_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(250*time.Millisecond))
-	writeMu.Unlock()
 	closeConn()
 
 	textMu.Lock()
