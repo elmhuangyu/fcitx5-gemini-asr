@@ -320,7 +320,7 @@ func (cs *clientSession) handleStartRecording(reqLang string) {
 	cs.prefetch.Reset()
 
 	cfg := cs.server.deps.ConfigManager.Get()
-	apiKey, err := cs.server.deps.KeyLoader(cfg.Connection.CredentialName, cfg.Connection.FallbackEnv)
+	apiKey, err := cs.server.deps.KeyLoader(DefaultCredentialName, DefaultFallbackEnv)
 	if err != nil {
 		recCancel()
 		cs.sendIfSession(sid, ServerEvent{Event: "error", Message: err.Error()})
@@ -338,7 +338,7 @@ func (cs *clientSession) handleStartRecording(reqLang string) {
 
 	lang := strings.TrimSpace(reqLang)
 	if lang == "" {
-		lang = cfg.LiveTranscribe.Language
+		lang = cfg.LiveLanguage()
 	}
 
 	cs.sendIfSession(sid, ServerEvent{Event: "state_changed", State: "recording"})
@@ -458,7 +458,7 @@ func (cs *clientSession) handlePostProcess(action, targetLabel string) {
 		return
 	}
 
-	apiKey, err := cs.server.deps.KeyLoader(cfg.Connection.CredentialName, cfg.Connection.FallbackEnv)
+	apiKey, err := cs.server.deps.KeyLoader(DefaultCredentialName, DefaultFallbackEnv)
 	if err != nil {
 		cs.sendUnchecked(ServerEvent{
 			Event:   "error",

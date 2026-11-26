@@ -80,7 +80,7 @@ func startTestSocketServer(t *testing.T, tr LiveTranscriber, pp PostProcessRunne
 	// Use /tmp short path if t.TempDir() is long for AF_UNIX 108-byte limit, though Linux allows ~107 chars.
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "test.sock")
-	cfgPath := filepath.Join(dir, "config.toml")
+	cfgPath := filepath.Join(dir, "gemini-voice.conf")
 
 	cfgMgr, err := NewConfigManager(cfgPath)
 	if err != nil {
@@ -264,7 +264,7 @@ func TestSocketServer_RefusesNonSocketPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfgMgr, err := NewConfigManager(filepath.Join(dir, "config.toml"))
+	cfgMgr, err := NewConfigManager(filepath.Join(dir, "gemini-voice.conf"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestSocketServer_DynamicTranslateTargetLabel(t *testing.T) {
 		t.Fatalf("got %+v", ev)
 	}
 
-	// Frontend can request a language added in fcitx5-configtool without modifying config.toml or restarting daemon.
+	// Frontend can request a language added in fcitx5-configtool without modifying the conf or restarting daemon.
 	sendCmd(t, conn, ClientCommand{Cmd: "post_process", Action: "translate_ja", TargetLabel: "Japanese"})
 	if ev := readEvent(t, scanner); ev.Event != "state_changed" || ev.State != "processing" {
 		t.Fatalf("got %+v", ev)
@@ -380,7 +380,7 @@ func TestSocketServer_DynamicTranslateTargetLabel(t *testing.T) {
 func TestSocketServer_ClientDisconnectCancelsCapture(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "disc.sock")
-	cfgMgr, err := NewConfigManager(filepath.Join(dir, "config.toml"))
+	cfgMgr, err := NewConfigManager(filepath.Join(dir, "gemini-voice.conf"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -554,7 +554,7 @@ func TestSocketServer_StalledClientWriteDeadline(t *testing.T) {
 
 	t.Run("handleConnection_stalled_peer", func(t *testing.T) {
 		dir := t.TempDir()
-		cfgMgr, err := NewConfigManager(filepath.Join(dir, "config.toml"))
+		cfgMgr, err := NewConfigManager(filepath.Join(dir, "gemini-voice.conf"))
 		if err != nil {
 			t.Fatal(err)
 		}

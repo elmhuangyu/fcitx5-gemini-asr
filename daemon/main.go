@@ -13,16 +13,9 @@ import (
 // Version is injected at build time via -ldflags "-X main.Version=...".
 var Version = "dev"
 
-func defaultConfigPath() string {
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "gemini-voice", "config.toml")
-	}
-	home, err := os.UserHomeDir()
-	if err == nil && home != "" {
-		return filepath.Join(home, ".config", "gemini-voice", "config.toml")
-	}
-	return "config.toml"
-}
+// defaultConfigPath is the Fcitx5 addon config file (gemini-voice.conf) that
+// holds every non-secret setting.
+func defaultConfigPath() string { return DefaultConfigPath() }
 
 func defaultSocketPath() string {
 	if env := os.Getenv("GEMINI_IME_SOCKET"); env != "" {
@@ -35,11 +28,7 @@ func defaultSocketPath() string {
 }
 
 func runDaemon(configPath, socketPath string) int {
-	if migrated, migErr := MigrateOrphanedFcitxTranslateLanguages(DefaultFcitxConfigPath(), translateMigrationMarkerPath(configPath)); migErr != nil {
-		log.Printf("migrate fcitx translate_languages: %v", migErr)
-	} else if migrated {
-		log.Printf("migrated orphaned [TranslateLanguages] 0=en from %s", DefaultFcitxConfigPath())
-	}
+	migrateLegacyIfDefault(configPath, defaultCLIDeps(), log.Printf)
 
 	cfgMgr, err := NewConfigManager(configPath)
 	if err != nil {

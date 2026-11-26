@@ -11,8 +11,7 @@ import (
 func cmdConfigure(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("configure", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
-	fcitxPath := fs.String("fcitx-config", DefaultFcitxConfigPath(), "Path to Fcitx5 gemini-voice.conf")
+	configPath := fs.String("config", defaultConfigPath(), "Path to gemini-voice.conf")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -25,7 +24,7 @@ func cmdConfigure(args []string, deps cliDeps) int {
 		return 1
 	}
 
-	if _, err := runSetupTUI(*configPath, *fcitxPath, setupFormOptions{IncludeAPIKey: false}, deps); err != nil {
+	if _, err := runSetupTUI(*configPath, setupFormOptions{IncludeAPIKey: false}, deps); err != nil {
 		if errors.Is(err, huh.ErrUserAborted) {
 			_, _ = fmt.Fprintln(deps.stderr, "Configuration cancelled; no changes were saved.")
 			return 1

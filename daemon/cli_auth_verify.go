@@ -13,9 +13,8 @@ import (
 func cmdAuthVerify(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("auth verify", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
+	configPath := fs.String("config", defaultConfigPath(), "Path to gemini-voice.conf")
 	credPathFlag := fs.String("path", "", "Path to encrypted .cred file")
-	credNameFlag := fs.String("name", "", "Credential name override")
 	offline := fs.Bool("offline", false, "Verify local credential decryption only without calling Gemini API")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -24,11 +23,7 @@ func cmdAuthVerify(args []string, deps cliDeps) int {
 		return 2
 	}
 
-	credName, credPath, err := resolveCredNameAndPath(*configPath, *credNameFlag, *credPathFlag)
-	if err != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
-		return 1
-	}
+	credName, credPath := resolveCredPath(*credPathFlag)
 
 	info, err := os.Stat(credPath)
 	if err != nil {
@@ -73,6 +68,7 @@ func cmdAuthVerify(args []string, deps cliDeps) int {
 
 	var model, preview string
 	if !*offline {
+		cliMigrate(*configPath, deps)
 		cfg, cfgErr := loadConfigOrDefault(*configPath)
 		if cfgErr != nil {
 			_, _ = fmt.Fprintf(deps.stderr, "error: load config %q: %v\n", *configPath, cfgErr)
@@ -150,9 +146,7 @@ func containsAny(s string, substrs []string) bool {
 func cmdAuthRemove(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("auth remove", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
 	credPathFlag := fs.String("path", "", "Path to encrypted .cred file")
-	credNameFlag := fs.String("name", "", "Credential name override")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -160,11 +154,7 @@ func cmdAuthRemove(args []string, deps cliDeps) int {
 		return 2
 	}
 
-	_, credPath, err := resolveCredNameAndPath(*configPath, *credNameFlag, *credPathFlag)
-	if err != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
-		return 1
-	}
+	_, credPath := resolveCredPath(*credPathFlag)
 
 	if err := os.Remove(credPath); err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "error: remove %q: %v\n", credPath, err)
@@ -177,7 +167,6 @@ func cmdAuthRemove(args []string, deps cliDeps) int {
 func cmdAuthStatus(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("auth status", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
 	credPathFlag := fs.String("path", "", "Path to encrypted .cred file")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -186,6 +175,6 @@ func cmdAuthStatus(args []string, deps cliDeps) int {
 		return 2
 	}
 
-	printAuthDiagnostics(*configPath, *credPathFlag, deps)
+	printAuthDiagnostics(*credPathFlag, deps)
 	return 0
 }

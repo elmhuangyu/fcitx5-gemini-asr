@@ -102,5 +102,28 @@ int main() {
         REQUIRE(*cfg.live.value().mode == fcitx_gemini_voice::LiveMode::SMART);
         REQUIRE(cfg.live.value().customVocabulary.value()[1] == "Pipe Wire");
     }
+
+    // The file the Go daemon writes must load through Fcitx5's parser too.
+    {
+        fcitx_gemini_voice::GeminiVoiceConfig cfg;
+        fcitx::readAsIni(cfg, fcitx::StandardPathsType::Config,
+                         std::filesystem::path(GOLDEN_DIR) /
+                             "gemini-voice.go-written.conf");
+        REQUIRE(*cfg.language == "en-US");
+        REQUIRE(*cfg.showActionMenu == false);
+        REQUIRE(cfg.translateLanguages.value().size() == 2);
+        REQUIRE(cfg.translateLanguages.value()[1] == "Pig Latin");
+        REQUIRE(*cfg.live.value().mode == fcitx_gemini_voice::LiveMode::SMART);
+        REQUIRE(*cfg.live.value().vadSilenceMs == 0);
+        REQUIRE(cfg.live.value().customVocabulary.value()[1] == "Pipe Wire");
+        REQUIRE(cfg.postProcess.value().prefetch.value().empty());
+        REQUIRE(cfg.postProcess.value().actions.value().size() == 3);
+        REQUIRE(*cfg.postProcess.value().actions.value()[1].prompt ==
+                "Be formal.\nSecond \"line\".");
+        REQUIRE(*cfg.postProcess.value().actions.value()[2].name ==
+                "translate_ja");
+        REQUIRE(*cfg.connection.value().proxy == "http://127.0.0.1:8080");
+        REQUIRE(*cfg.connection.value().liveWsUrl == "wss://x.invalid/live");
+    }
     return 0;
 }

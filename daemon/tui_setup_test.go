@@ -78,13 +78,12 @@ func clearChars(f *huh.Form, n int) *huh.Form {
 
 func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	cfg := DefaultConfig()
-	fcitxCfg := DefaultFcitxAddonConfig()
 	opts := setupFormOptions{
 		IncludeAPIKey: true,
 		WithKey:       "auto",
 		CredExists:    false,
 	}
-	state := newSetupFormState(cfg, fcitxCfg, opts)
+	state := newSetupFormState(cfg, opts)
 	form := initTestForm(buildSetupForm(state, opts))
 
 	// Group 1, Field 1: Select Input mode (move down -> up -> confirm Action menu).
@@ -181,14 +180,14 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 		t.Fatalf("form.State = %v, want StateCompleted (%v)\nview:\n%s", form.State, huh.StateCompleted, ansi.Strip(form.View()))
 	}
 
-	if err := applySetupFormState(&cfg, &fcitxCfg, state); err != nil {
+	if err := applySetupFormState(&cfg, state); err != nil {
 		t.Fatalf("applySetupFormState: %v", err)
 	}
-	if !fcitxCfg.ShowActionMenu {
+	if !cfg.Ime.ShowActionMenu {
 		t.Fatal("expected ShowActionMenu=true")
 	}
-	if cfg.LiveTranscribe.Language != "en-US" {
-		t.Fatalf("language = %q, want en-US", cfg.LiveTranscribe.Language)
+	if cfg.LiveLanguage() != "en-US" {
+		t.Fatalf("language = %q, want en-US", cfg.LiveLanguage())
 	}
 	if cfg.LiveTranscribe.Mode != "SMART" {
 		t.Fatalf("mode = %q, want SMART", cfg.LiveTranscribe.Mode)
@@ -209,11 +208,8 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 	if !reflect.DeepEqual(cfg.LiveTranscribe.CustomVocabulary, wantVocab) {
 		t.Fatalf("custom_vocabulary = %#v, want %#v", cfg.LiveTranscribe.CustomVocabulary, wantVocab)
 	}
-	if !reflect.DeepEqual(cfg.PostProcess.TranslateLanguages, []string{"en", "ja"}) {
-		t.Fatalf("PostProcess.TranslateLanguages = %#v, want [en ja]", cfg.PostProcess.TranslateLanguages)
-	}
-	if len(fcitxCfg.TranslateLanguages) != 0 {
-		t.Fatalf("FcitxAddonConfig.TranslateLanguages = %#v, want empty (follow daemon)", fcitxCfg.TranslateLanguages)
+	if !reflect.DeepEqual(cfg.Ime.TranslateLanguages, []string{"en", "ja"}) {
+		t.Fatalf("TranslateLanguages = %#v, want [en ja]", cfg.Ime.TranslateLanguages)
 	}
 	if cfg.Connection.Proxy != "socks5://127.0.0.1:1080" {
 		t.Fatalf("proxy = %q", cfg.Connection.Proxy)
@@ -226,14 +222,13 @@ func TestBuildSetupForm_ArrowKeysValidationAndPasswordMasking(t *testing.T) {
 func TestBuildSetupForm_ConditionalHiddenGroupsAndAbort(t *testing.T) {
 	t.Run("hidden_groups_skipped", func(t *testing.T) {
 		cfg := DefaultConfig()
-		fcitxCfg := DefaultFcitxAddonConfig()
 		opts := setupFormOptions{
 			IncludeAPIKey: true,
 			WithKey:       "auto",
 			CredPath:      "/tmp/test.cred",
 			CredExists:    true,
 		}
-		state := newSetupFormState(cfg, fcitxCfg, opts)
+		state := newSetupFormState(cfg, opts)
 		form := initTestForm(buildSetupForm(state, opts))
 
 		// Group 1: choose Direct commit (Down + Enter), keep language (Enter), keep mode (Enter), keep VAD (Enter).
@@ -276,9 +271,8 @@ func TestBuildSetupForm_ConditionalHiddenGroupsAndAbort(t *testing.T) {
 
 	t.Run("ctrl_c_aborts", func(t *testing.T) {
 		cfg := DefaultConfig()
-		fcitxCfg := DefaultFcitxAddonConfig()
 		opts := setupFormOptions{IncludeAPIKey: false}
-		state := newSetupFormState(cfg, fcitxCfg, opts)
+		state := newSetupFormState(cfg, opts)
 		form := initTestForm(buildSetupForm(state, opts))
 
 		form = pressKey(form, tea.Key{Code: 'c', Mod: tea.ModCtrl})
@@ -289,13 +283,13 @@ func TestBuildSetupForm_ConditionalHiddenGroupsAndAbort(t *testing.T) {
 }
 
 func TestApplySetupFormState_DisableOverridesClearsStaleModels(t *testing.T) {
-	newInitialConfigs := func() (Config, FcitxAddonConfig) {
+	newInitialConfigs := func() Config {
 		cfg := DefaultConfig()
 		cfg.PostProcess.Models = map[string]string{
 			"refine_formal": "gemini-2.5-pro",
 			"as_prompt":     "gemini-2.5-pro",
 		}
-		return cfg, DefaultFcitxAddonConfig()
+		return cfg
 	}
 
 	assertCleared := func(t *testing.T, cfg Config) {
@@ -311,23 +305,23 @@ func TestApplySetupFormState_DisableOverridesClearsStaleModels(t *testing.T) {
 	}
 
 	t.Run("direct_state_toggle", func(t *testing.T) {
-		cfg, fcitxCfg := newInitialConfigs()
-		state := newSetupFormState(cfg, fcitxCfg, setupFormOptions{})
+		cfg := newInitialConfigs()
+		state := newSetupFormState(cfg, setupFormOptions{})
 		if !state.configureOverrides {
 			t.Fatal("expected initial configureOverrides=true when PostProcess.Models is non-empty")
 		}
 		state.configureOverrides = false
 
-		if err := applySetupFormState(&cfg, &fcitxCfg, state); err != nil {
+		if err := applySetupFormState(&cfg, state); err != nil {
 			t.Fatalf("applySetupFormState: %v", err)
 		}
 		assertCleared(t, cfg)
 	})
 
 	t.Run("interactive_form_toggle", func(t *testing.T) {
-		cfg, fcitxCfg := newInitialConfigs()
+		cfg := newInitialConfigs()
 		opts := setupFormOptions{IncludeAPIKey: false}
-		state := newSetupFormState(cfg, fcitxCfg, opts)
+		state := newSetupFormState(cfg, opts)
 		if !state.configureOverrides {
 			t.Fatal("expected initial configureOverrides=true when PostProcess.Models is non-empty")
 		}
@@ -367,7 +361,7 @@ func TestApplySetupFormState_DisableOverridesClearsStaleModels(t *testing.T) {
 		if state.configureOverrides {
 			t.Fatal("expected state.configureOverrides=false after toggling Confirm to No")
 		}
-		if err := applySetupFormState(&cfg, &fcitxCfg, state); err != nil {
+		if err := applySetupFormState(&cfg, state); err != nil {
 			t.Fatalf("applySetupFormState: %v", err)
 		}
 		assertCleared(t, cfg)

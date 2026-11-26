@@ -43,7 +43,8 @@ type setupResult struct {
 	APIKey       string
 }
 
-func newSetupFormState(cfg Config, fcitxCfg FcitxAddonConfig, opts setupFormOptions) *setupFormState {
+func newSetupFormState(cfg Config, opts setupFormOptions) *setupFormState {
+	fcitxCfg := cfg.Ime
 	actionOrder := cfg.EffectiveActionNames()
 	overrides := make([]string, len(actionOrder))
 	for i, action := range actionOrder {
@@ -55,10 +56,7 @@ func newSetupFormState(cfg Config, fcitxCfg FcitxAddonConfig, opts setupFormOpti
 		liveMode = DefaultLiveMode
 	}
 
-	lang := strings.TrimSpace(cfg.LiveTranscribe.Language)
-	if lang == "" {
-		lang = DefaultLiveLanguage
-	}
+	lang := cfg.LiveLanguage()
 
 	liveModel := strings.TrimSpace(cfg.LiveTranscribe.Model)
 	if liveModel == "" {
@@ -70,7 +68,7 @@ func newSetupFormState(cfg Config, fcitxCfg FcitxAddonConfig, opts setupFormOpti
 		ppModel = DefaultPostProcessModel
 	}
 
-	translateLangs := strings.Join(cfg.PostProcess.TranslateLanguages, ", ")
+	translateLangs := strings.Join(fcitxCfg.TranslateLanguages, ", ")
 	if strings.TrimSpace(translateLangs) == "" {
 		translateLangs = "en"
 	}
@@ -332,27 +330,27 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 		WithShowErrors(true)
 }
 
-func applySetupFormState(cfg *Config, fcitxCfg *FcitxAddonConfig, state *setupFormState) error {
+func applySetupFormState(cfg *Config, state *setupFormState) error {
 	imeMode := "direct"
 	if state.showActionMenu {
 		imeMode = "menu"
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "ime.mode", imeMode); err != nil {
+	if _, err := setConfigKey(cfg, "ime.mode", imeMode); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "live.language", state.language); err != nil {
+	if _, err := setConfigKey(cfg, "live.language", state.language); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "live.mode", state.liveMode); err != nil {
+	if _, err := setConfigKey(cfg, "live.mode", state.liveMode); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "live.vad_silence_ms", state.vadSilenceMs); err != nil {
+	if _, err := setConfigKey(cfg, "live.vad_silence_ms", state.vadSilenceMs); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "live.model", state.liveModel); err != nil {
+	if _, err := setConfigKey(cfg, "live.model", state.liveModel); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "post_process.model", state.postProcessModel); err != nil {
+	if _, err := setConfigKey(cfg, "post_process.model", state.postProcessModel); err != nil {
 		return err
 	}
 	if state.configureOverrides {
@@ -373,16 +371,16 @@ func applySetupFormState(cfg *Config, fcitxCfg *FcitxAddonConfig, state *setupFo
 			cfg.PostProcess.Prefetch = append([]string(nil), state.prefetch...)
 		}
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "live.custom_vocabulary", state.customVocabulary); err != nil {
+	if _, err := setConfigKey(cfg, "live.custom_vocabulary", state.customVocabulary); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "ime.trigger_key", state.triggerKeys); err != nil {
+	if _, err := setConfigKey(cfg, "ime.trigger_key", state.triggerKeys); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "connection.proxy", state.proxy); err != nil {
+	if _, err := setConfigKey(cfg, "connection.proxy", state.proxy); err != nil {
 		return err
 	}
-	if _, _, err := setConfigKey(cfg, fcitxCfg, "post_process.translate_languages", state.translateLanguages); err != nil {
+	if _, err := setConfigKey(cfg, "post_process.translate_languages", state.translateLanguages); err != nil {
 		return err
 	}
 	return nil
@@ -401,18 +399,14 @@ func runHuhSetupForm(state *setupFormState, opts setupFormOptions, deps cliDeps)
 	return form.Run()
 }
 
-func runSetupTUI(configPath, fcitxConfigPath string, opts setupFormOptions, deps cliDeps) (setupResult, error) {
+func runSetupTUI(configPath string, opts setupFormOptions, deps cliDeps) (setupResult, error) {
+	cliMigrate(configPath, deps)
 	cfg, err := loadConfigOrDefault(configPath)
 	if err != nil {
 		return setupResult{}, fmt.Errorf("load config %q: %w", configPath, err)
 	}
-	_, _ = MigrateOrphanedFcitxTranslateLanguages(fcitxConfigPath, translateMigrationMarkerPath(configPath))
-	fcitxCfg, err := LoadFcitxAddonConfig(fcitxConfigPath)
-	if err != nil {
-		return setupResult{}, err
-	}
 
-	state := newSetupFormState(cfg, fcitxCfg, opts)
+	state := newSetupFormState(cfg, opts)
 	if deps.runSetupForm != nil {
 		err = deps.runSetupForm(state, opts)
 	} else {
@@ -426,22 +420,18 @@ func runSetupTUI(configPath, fcitxConfigPath string, opts setupFormOptions, deps
 		return setupResult{}, errors.New("API key cannot be empty")
 	}
 
-	if err := applySetupFormState(&cfg, &fcitxCfg, state); err != nil {
+	if err := applySetupFormState(&cfg, state); err != nil {
 		return setupResult{}, err
 	}
 	if err := SaveConfigFile(configPath, cfg); err != nil {
-		return setupResult{}, fmt.Errorf("save daemon config %q: %w", configPath, err)
-	}
-	if err := SaveFcitxAddonConfig(fcitxConfigPath, fcitxCfg); err != nil {
-		return setupResult{}, fmt.Errorf("save fcitx5 config %q: %w", fcitxConfigPath, err)
+		return setupResult{}, fmt.Errorf("save config %q: %w", configPath, err)
 	}
 	reloaded := ReloadFcitx5Config(context.Background(), deps)
 
-	_, _ = fmt.Fprintf(deps.stdout, "\nSaved daemon config: %s\n", configPath)
 	if reloaded {
-		_, _ = fmt.Fprintf(deps.stdout, "Saved Fcitx5 config: %s (reloaded Fcitx5)\n", fcitxConfigPath)
+		_, _ = fmt.Fprintf(deps.stdout, "\nSaved config: %s (reloaded Fcitx5; the daemon applies changes automatically)\n", configPath)
 	} else {
-		_, _ = fmt.Fprintf(deps.stdout, "Saved Fcitx5 config: %s\n", fcitxConfigPath)
+		_, _ = fmt.Fprintf(deps.stdout, "\nSaved config: %s (the daemon applies changes automatically)\n", configPath)
 	}
 
 	return setupResult{

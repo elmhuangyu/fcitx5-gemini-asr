@@ -23,7 +23,7 @@ func (s *stringSliceFlag) Set(val string) error {
 func cmdModels(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("models", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
+	configPath := fs.String("config", defaultConfigPath(), "Path to gemini-voice.conf")
 	remote := fs.Bool("remote", false, "Query Gemini API /v1beta/models using configured credentials")
 	liveModel := fs.String("live", "", "Set live transcription model")
 	defaultModel := fs.String("default", "", "Set default post-processing model; optional thinking effort suffix /low|medium|high, e.g. gemini-3.5-flash/low")
@@ -47,6 +47,7 @@ func cmdModels(args []string, deps cliDeps) int {
 		visited[f.Name] = true
 	})
 
+	cliMigrate(*configPath, deps)
 	cfg, err := loadConfigOrDefault(*configPath)
 	if err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "error: load config %q: %v\n", *configPath, err)
@@ -135,7 +136,7 @@ func cmdModels(args []string, deps cliDeps) int {
 	printModelTable(deps.stdout, cfg)
 
 	if *remote {
-		apiKey, keyErr := LoadAPIKey(cfg.Connection.CredentialName, cfg.Connection.FallbackEnv)
+		apiKey, keyErr := LoadAPIKey(DefaultCredentialName, DefaultFallbackEnv)
 		if keyErr != nil {
 			_, _ = fmt.Fprintf(deps.stderr, "\nerror: load API key for --remote query: %v\n", keyErr)
 			return 1

@@ -11,7 +11,7 @@ import (
 
 func TestCLI_ModelEffortSuffix(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	cfgPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
 	if err := SaveConfigFile(cfgPath, DefaultConfig()); err != nil {
 		t.Fatal(err)
 	}

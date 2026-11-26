@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/fsnotify/fsnotify"
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/proxy"
@@ -41,27 +39,31 @@ var KnownActions = []string{
 	"ask_ai",
 }
 
+// Config is the effective daemon configuration, read from the Fcitx5 addon
+// config file (gemini-voice.conf). Ime holds the addon-consumed keys; they live
+// in the same file and the daemon reads the language and translation targets
+// from them. The API key is never part of it (see credentials.go).
 type Config struct {
-	Connection     ConnectionConfig     `toml:"connection"`
-	LiveTranscribe LiveTranscribeConfig `toml:"live_transcribe"`
-	PostProcess    PostProcessConfig    `toml:"post_process"`
-	Prompts        map[string]string    `toml:"prompts"`
+	Ime            FcitxAddonConfig
+	Connection     ConnectionConfig
+	LiveTranscribe LiveTranscribeConfig
+	PostProcess    PostProcessConfig
+	// Prompts holds the effective prompt per action: the built-in defaults
+	// overlaid with the Actions overrides from the config file.
+	Prompts map[string]string
 }
 
 type ConnectionConfig struct {
-	CredentialName string `toml:"credential_name"`
-	FallbackEnv    string `toml:"fallback_env"`
-	Proxy          string `toml:"proxy"`
-	LiveWSURL      string `toml:"live_ws_url,omitempty"`
-	APIBaseURL     string `toml:"api_base_url,omitempty"`
+	Proxy      string
+	LiveWSURL  string
+	APIBaseURL string
 }
 
 type LiveTranscribeConfig struct {
-	Model            string   `toml:"model"`
-	Language         string   `toml:"language"`
-	Mode             string   `toml:"mode,omitempty"`
-	CustomVocabulary []string `toml:"custom_vocabulary,omitempty"`
-	VADSilenceMs     int      `toml:"vad_silence_ms"`
+	Model            string
+	Mode             string
+	CustomVocabulary []string
+	VADSilenceMs     int
 }
 
 type TranslateTarget struct {
@@ -70,80 +72,51 @@ type TranslateTarget struct {
 }
 
 type PostProcessConfig struct {
-	Model              string            `toml:"model"`
-	Models             map[string]string `toml:"models,omitempty"`
-	Prefetch           []string          `toml:"prefetch"`
-	TranslateLanguages []string          `toml:"translate_languages,omitempty"`
+	Model string
+	// Models holds per-action model overrides (empty inherits Model).
+	Models   map[string]string
+	Prefetch []string
 }
 
+// defaultPrompts are the built-in prompts; they live in code and are only
+// written to the config file when the user overrides them.
+var defaultPrompts = map[string]string{
+	"refine_fix_typos": "仅修正以下语音转录文本中的错别字、同音字错误和标点符号。严禁增删词汇或改变原本的口语语气，直接输出结果：",
+	"refine_casual":    "将以下文本润色为自然、流畅、轻松的日常对话语气（适合即时通讯聊天），保留原意，直接输出结果：",
+	"refine_formal":    "将以下文本润色为清晰、专业、得体的正式书面语（适合工作邮件或技术文档），直接输出结果：",
+	"as_prompt":        "将以下口述需求整理为结构清晰、条件明确的 AI Prompt，直接输出提示词内容：",
+	"translate_en":     "Translate the following text into natural, idiomatic English. Output ONLY the translation:",
+	"ask_ai":           "请直接将以下语音内容作为提示词或指令执行，并直接输出生成的最终内容，不要复述指令或添加多余解释：",
+}
+
+const DefaultVADSilenceMs = 1200
+
 func DefaultConfig() Config {
+	prompts := make(map[string]string, len(defaultPrompts))
+	for k, v := range defaultPrompts {
+		prompts[k] = v
+	}
 	return Config{
-		Connection: ConnectionConfig{
-			CredentialName: DefaultCredentialName,
-			FallbackEnv:    DefaultFallbackEnv,
-			Proxy:          "",
-		},
+		Ime: DefaultFcitxAddonConfig(),
 		LiveTranscribe: LiveTranscribeConfig{
 			Model:        DefaultLiveModel,
-			Language:     DefaultLiveLanguage,
 			Mode:         DefaultLiveMode,
-			VADSilenceMs: 1200,
+			VADSilenceMs: DefaultVADSilenceMs,
 		},
 		PostProcess: PostProcessConfig{
-			Model:              DefaultPostProcessModel,
-			Prefetch:           []string{"refine_fix_typos", "refine_formal"},
-			TranslateLanguages: []string{"en"},
+			Model:    DefaultPostProcessModel,
+			Prefetch: []string{"refine_fix_typos", "refine_formal"},
 		},
-		Prompts: map[string]string{
-			"refine_fix_typos": "仅修正以下语音转录文本中的错别字、同音字错误和标点符号。严禁增删词汇或改变原本的口语语气，直接输出结果：",
-			"refine_casual":    "将以下文本润色为自然、流畅、轻松的日常对话语气（适合即时通讯聊天），保留原意，直接输出结果：",
-			"refine_formal":    "将以下文本润色为清晰、专业、得体的正式书面语（适合工作邮件或技术文档），直接输出结果：",
-			"as_prompt":        "将以下口述需求整理为结构清晰、条件明确的 AI Prompt，直接输出提示词内容：",
-			"translate_en":     "Translate the following text into natural, idiomatic English. Output ONLY the translation:",
-			"ask_ai":           "请直接将以下语音内容作为提示词或指令执行，并直接输出生成的最终内容，不要复述指令或添加多余解释：",
-		},
+		Prompts: prompts,
 	}
 }
 
-// DefaultConfigTOML returns the canonical config.toml template matching systemd/config.toml.
-func DefaultConfigTOML() string {
-	return `[connection]
-credential_name = "gemini_api_key"
-fallback_env = "GEMINI_API_KEY"
-proxy = ""
-
-[live_transcribe]
-model = "gemini-3.5-transcribe-live"
-language = "auto" # "auto" (85+ languages & code-switching), or comma-separated BCP-47 (e.g. "cmn-Hans-CN,en-US"; "zh-CN" aliases to "cmn-Hans-CN")
-mode = "VERBATIM"        # "VERBATIM" (literal) or "SMART" (disfluency cleanup & formatting)
-# custom_vocabulary = ["Fcitx5", "PipeWire", "Gemini"]
-vad_silence_ms = 1200 # server-side VAD trailing silence before auto-stop (0 disables)
-
-[post_process]
-model = "gemini-3.5-flash-lite" # optional thinking effort suffix: "/low", "/medium" or "/high" (e.g. "gemini-3.5-flash/low")
-prefetch = ["refine_fix_typos", "refine_formal"]
-translate_languages = ["en"]
-
-[post_process.models]
-# Optional per-action model overrides (empty inherits post_process.model).
-# A "/low|medium|high" suffix sets thinking effort (gemini-3 and newer: thinkingLevel).
-# Without a suffix refine_*/translate_* use "low"; ask_ai and as_prompt use the provider default.
-# Not valid for live_transcribe.model.
-# refine_fix_typos = "gemini-3.5-flash-lite"
-# refine_casual = "gemini-3.5-flash"
-# refine_formal = "gemini-4-hydrogen"
-# as_prompt = "gemini-4-hydrogen"
-# translate_en = "gemini-3.5-flash/low"
-# ask_ai = "gemini-4-hydrogen"
-
-[prompts]
-refine_fix_typos = "仅修正以下语音转录文本中的错别字、同音字错误和标点符号。严禁增删词汇或改变原本的口语语气，直接输出结果："
-refine_casual = "将以下文本润色为自然、流畅、轻松的日常对话语气（适合即时通讯聊天），保留原意，直接输出结果："
-refine_formal = "将以下文本润色为清晰、专业、得体的正式书面语（适合工作邮件或技术文档），直接输出结果："
-as_prompt = "将以下口述需求整理为结构清晰、条件明确的 AI Prompt，直接输出提示词内容："
-translate_en = "Translate the following text into natural, idiomatic English. Output ONLY the translation:"
-ask_ai = "请直接将以下语音内容作为提示词或指令执行，并直接输出生成的最终内容，不要复述指令或添加多余解释："
-`
+// LiveLanguage returns the transcription language, defaulting to "auto".
+func (c Config) LiveLanguage() string {
+	if l := strings.TrimSpace(c.Ime.Language); l != "" {
+		return l
+	}
+	return DefaultLiveLanguage
 }
 
 // NormalizeLiveMode validates and canonicalizes a Live transcription mode string.
@@ -183,14 +156,15 @@ func pruneCustomVocabulary(terms []string) []string {
 
 func (c Config) Clone() Config {
 	out := c
+	out.Ime.TriggerKeys = append([]string(nil), c.Ime.TriggerKeys...)
+	if c.Ime.TranslateLanguages != nil {
+		out.Ime.TranslateLanguages = append([]string(nil), c.Ime.TranslateLanguages...)
+	}
 	if c.LiveTranscribe.CustomVocabulary != nil {
 		out.LiveTranscribe.CustomVocabulary = append([]string(nil), c.LiveTranscribe.CustomVocabulary...)
 	}
 	if c.PostProcess.Prefetch != nil {
 		out.PostProcess.Prefetch = append([]string(nil), c.PostProcess.Prefetch...)
-	}
-	if c.PostProcess.TranslateLanguages != nil {
-		out.PostProcess.TranslateLanguages = append([]string(nil), c.PostProcess.TranslateLanguages...)
 	}
 	if c.PostProcess.Models != nil {
 		out.PostProcess.Models = make(map[string]string, len(c.PostProcess.Models))
@@ -325,9 +299,9 @@ func normalizeTranslateLanguages(langs []string) []string {
 
 // TranslateTargets returns the deduplicated list of configured translation targets, defaulting to English.
 func (c Config) TranslateTargets() []TranslateTarget {
-	out := make([]TranslateTarget, 0, len(c.PostProcess.TranslateLanguages))
-	seen := make(map[string]struct{}, len(c.PostProcess.TranslateLanguages))
-	for _, raw := range c.PostProcess.TranslateLanguages {
+	out := make([]TranslateTarget, 0, len(c.Ime.TranslateLanguages))
+	seen := make(map[string]struct{}, len(c.Ime.TranslateLanguages))
+	for _, raw := range c.Ime.TranslateLanguages {
 		target, ok := ResolveTranslateTarget(raw)
 		if !ok {
 			continue
@@ -413,36 +387,6 @@ func (c Config) EffectiveActionNames() []string {
 	return append(out, extra...)
 }
 
-// renderConfigTOML normalizes cfg and encodes it as TOML without writing anything.
-func renderConfigTOML(cfg Config) ([]byte, error) {
-	toWrite := cfg.Clone()
-	toWrite.LiveTranscribe.CustomVocabulary = pruneCustomVocabulary(toWrite.LiveTranscribe.CustomVocabulary)
-	if toWrite.PostProcess.Prefetch == nil {
-		toWrite.PostProcess.Prefetch = []string{}
-	}
-	toWrite.PostProcess.TranslateLanguages = normalizeTranslateLanguages(toWrite.PostProcess.TranslateLanguages)
-	if len(toWrite.PostProcess.Models) > 0 {
-		pruned := make(map[string]string, len(toWrite.PostProcess.Models))
-		for k, v := range toWrite.PostProcess.Models {
-			if trimmed := strings.TrimSpace(v); trimmed != "" {
-				pruned[k] = trimmed
-			}
-		}
-		if len(pruned) > 0 {
-			toWrite.PostProcess.Models = pruned
-		} else {
-			toWrite.PostProcess.Models = nil
-		}
-	}
-
-	var buf bytes.Buffer
-	enc := toml.NewEncoder(&buf)
-	if err := enc.Encode(toWrite); err != nil {
-		return nil, fmt.Errorf("encode config TOML: %w", err)
-	}
-	return buf.Bytes(), nil
-}
-
 // writeConfigFileAtomic creates path's parent directory if needed and writes
 // data atomically with mode 0600; kind names the file in error messages.
 func writeConfigFileAtomic(path string, data []byte, kind string) error {
@@ -452,59 +396,6 @@ func writeConfigFileAtomic(path string, data []byte, kind string) error {
 		return fmt.Errorf("create %s directory %q: %w", kind, dir, err)
 	}
 	return writeFileAtomic(cleanPath, data, 0o600)
-}
-
-// SaveConfigFile atomically writes cfg as TOML with mode 0600.
-func SaveConfigFile(path string, cfg Config) error {
-	data, err := renderConfigTOML(cfg)
-	if err != nil {
-		return err
-	}
-	return writeConfigFileAtomic(path, data, "config")
-}
-
-func LoadConfigFile(path string) (Config, error) {
-	cfg := DefaultConfig()
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return Config{}, err
-	}
-	if strings.TrimSpace(cfg.Connection.CredentialName) == "" {
-		cfg.Connection.CredentialName = DefaultCredentialName
-	}
-	if strings.TrimSpace(cfg.Connection.FallbackEnv) == "" {
-		cfg.Connection.FallbackEnv = DefaultFallbackEnv
-	}
-	if strings.TrimSpace(cfg.LiveTranscribe.Model) == "" {
-		cfg.LiveTranscribe.Model = DefaultLiveModel
-	}
-	mode, err := NormalizeLiveMode(cfg.LiveTranscribe.Mode)
-	if err != nil {
-		return Config{}, err
-	}
-	cfg.LiveTranscribe.Mode = mode
-	cfg.LiveTranscribe.CustomVocabulary = pruneCustomVocabulary(cfg.LiveTranscribe.CustomVocabulary)
-	if len(cfg.LiveTranscribe.CustomVocabulary) > MaxCustomVocabulary {
-		return Config{}, fmt.Errorf("live_transcribe.custom_vocabulary has %d entries (max %d)", len(cfg.LiveTranscribe.CustomVocabulary), MaxCustomVocabulary)
-	}
-	if strings.TrimSpace(cfg.PostProcess.Model) == "" {
-		cfg.PostProcess.Model = DefaultPostProcessModel
-	}
-	if err := ValidateLiveModel(cfg.LiveTranscribe.Model); err != nil {
-		return Config{}, err
-	}
-	if err := ValidatePostProcessModel(cfg.PostProcess.Model); err != nil {
-		return Config{}, fmt.Errorf("post_process.model: %w", err)
-	}
-	for action, m := range cfg.PostProcess.Models {
-		if strings.TrimSpace(m) == "" {
-			continue
-		}
-		if err := ValidatePostProcessModel(m); err != nil {
-			return Config{}, fmt.Errorf("post_process.models.%s: %w", action, err)
-		}
-	}
-	cfg.PostProcess.TranslateLanguages = normalizeTranslateLanguages(cfg.PostProcess.TranslateLanguages)
-	return cfg, nil
 }
 
 type ConfigManager struct {

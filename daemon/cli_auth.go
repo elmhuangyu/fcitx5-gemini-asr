@@ -56,27 +56,24 @@ func validateWithKeyOption(withKey string) error {
 	}
 }
 
-func resolveCredNameAndPath(configPath, nameOverride, pathOverride string) (string, string, error) {
-	cfg, err := loadConfigOrDefault(configPath)
-	if err != nil {
-		return "", "", fmt.Errorf("load config %q: %w", configPath, err)
-	}
-	credName := strings.TrimSpace(nameOverride)
-	if credName == "" {
-		credName = cfg.Connection.CredentialName
-	}
-	if credName == "" {
-		credName = DefaultCredentialName
-	}
-	if err := validateCredentialName(credName); err != nil {
-		return "", "", err
-	}
-
+// resolveCredPath returns the fixed credential name and the encrypted
+// credential file path (pathOverride, or the default next to the legacy
+// config directory). The credential name is not configurable: it must match
+// the LoadCredentialEncrypted= name in the systemd unit.
+func resolveCredPath(pathOverride string) (string, string) {
 	credPath := strings.TrimSpace(pathOverride)
 	if credPath == "" {
-		credPath = filepath.Join(filepath.Dir(configPath), credName+".cred")
+		credPath = DefaultCredentialPath()
 	}
-	return credName, filepath.Clean(credPath), nil
+	return DefaultCredentialName, filepath.Clean(credPath)
+}
+
+// cliMigrate performs the one-time config.toml import for CLI commands that
+// operate on the default conf path.
+func cliMigrate(configPath string, deps cliDeps) {
+	migrateLegacyIfDefault(configPath, deps, func(format string, args ...any) {
+		_, _ = fmt.Fprintf(deps.stderr, format+"\n", args...)
+	})
 }
 
 func readSecretInput(deps cliDeps, keyFile string, useStdin bool) (string, error) {
@@ -128,9 +125,7 @@ func readSecretInput(deps cliDeps, keyFile string, useStdin bool) (string, error
 }
 
 type authSetOptions struct {
-	configPath string
 	outputPath string
-	credName   string
 	withKey    string
 	useStdin   bool
 	keyFile    string
@@ -143,13 +138,11 @@ func encryptAndSaveCredential(opts authSetOptions, deps cliDeps) error {
 	if err := validateWithKeyOption(opts.withKey); err != nil {
 		return err
 	}
-	credName, outPath, err := resolveCredNameAndPath(opts.configPath, opts.credName, opts.outputPath)
-	if err != nil {
-		return err
-	}
+	credName, outPath := resolveCredPath(opts.outputPath)
 
 	apiKey := strings.TrimSpace(opts.secret)
 	if apiKey == "" {
+		var err error
 		apiKey, err = readSecretInput(deps, opts.keyFile, opts.useStdin)
 		if err != nil {
 			return err
@@ -264,9 +257,7 @@ func encryptAndSaveCredential(opts authSetOptions, deps cliDeps) error {
 func cmdAuthSet(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("auth set", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
-	outputPath := fs.String("output", "", "Path to output .cred file (defaults to <config_dir>/<credential_name>.cred)")
-	credName := fs.String("name", "", "Credential name override (defaults to config credential_name)")
+	outputPath := fs.String("output", "", "Path to output .cred file (defaults to ~/.config/gemini-voice/gemini_api_key.cred)")
 	withKey := fs.String("with-key", "auto", "Encryption key type for systemd-creds --user: auto, host")
 	useStdin := fs.Bool("stdin", false, "Read API key from standard input")
 	keyFile := fs.String("key-file", "", "Read API key from file")
@@ -280,9 +271,7 @@ func cmdAuthSet(args []string, deps cliDeps) int {
 	}
 
 	err := encryptAndSaveCredential(authSetOptions{
-		configPath: *configPath,
 		outputPath: *outputPath,
-		credName:   *credName,
 		withKey:    *withKey,
 		useStdin:   *useStdin,
 		keyFile:    *keyFile,

@@ -12,7 +12,7 @@ import (
 
 func TestEffectiveActionNamesIncludesModelOverrides(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.PostProcess.TranslateLanguages = []string{"ja"}
+	cfg.Ime.TranslateLanguages = []string{"ja"}
 	cfg.PostProcess.Models = map[string]string{
 		"translate_ko": "gemini-2.5-flash",
 		"translate_ja": "gemini-2.5-pro",
@@ -49,56 +49,13 @@ func TestEffectiveActionNamesIncludesModelOverrides(t *testing.T) {
 	}
 }
 
-func TestConfigLoadSystemdTemplate(t *testing.T) {
-	cfg, err := LoadConfigFile(filepath.Join("..", "systemd", "config.toml"))
-	if err != nil {
-		t.Fatalf("load systemd/config.toml: %v", err)
-	}
-	if cfg.LiveTranscribe.Model != "gemini-3.5-transcribe-live" {
-		t.Fatalf("unexpected live model: %q", cfg.LiveTranscribe.Model)
-	}
-	if cfg.LiveTranscribe.Language != "auto" {
-		t.Fatalf("unexpected language: %q", cfg.LiveTranscribe.Language)
-	}
-	if cfg.LiveTranscribe.Mode != "VERBATIM" {
-		t.Fatalf("unexpected mode: %q", cfg.LiveTranscribe.Mode)
-	}
-	if cfg.LiveTranscribe.VADSilenceMs != 1200 {
-		t.Fatalf("unexpected vad_silence_ms: %d", cfg.LiveTranscribe.VADSilenceMs)
-	}
-	if cfg.PostProcess.Model != "gemini-3.5-flash-lite" {
-		t.Fatalf("unexpected post_process model: %q", cfg.PostProcess.Model)
-	}
-	if len(cfg.PostProcess.Prefetch) != 2 {
-		t.Fatalf("unexpected prefetch: %#v", cfg.PostProcess.Prefetch)
-	}
-	for _, key := range []string{"refine_fix_typos", "refine_casual", "refine_formal", "as_prompt", "translate_en", "ask_ai"} {
-		if cfg.Prompts[key] == "" {
-			t.Fatalf("missing prompt %q", key)
-		}
-	}
-
-	raw, err := os.ReadFile(filepath.Join("..", "systemd", "config.toml"))
-	if err != nil {
-		t.Fatalf("read systemd/config.toml: %v", err)
-	}
-	if string(raw) != DefaultConfigTOML() {
-		t.Fatalf("DefaultConfigTOML() drifted from systemd/config.toml")
-	}
-}
-
 func TestConfigManagerHotReload_WriteAndAtomicRename(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.toml")
-	initial := `
-[live_transcribe]
-model = "gemini-3.5-transcribe-live"
-language = "zh-CN"
-vad_silence_ms = 1200
-
-[prompts]
-refine_formal = "initial prompt"
-`
+	cfgPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	initial := "Language=zh-CN\n\n[LiveTranscription]\nVadSilenceMs=1200\n\n[PostProcess/Actions/0]\nName=refine_formal\nPrompt=\"initial prompt\"\n"
 	if err := os.WriteFile(cfgPath, []byte(initial), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +63,9 @@ refine_formal = "initial prompt"
 	mgr, err := NewConfigManager(cfgPath)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got := mgr.Get().Prompts["refine_formal"]; got != "initial prompt" {
+		t.Fatalf("initial prompt = %q", got)
 	}
 
 	reloaded := make(chan Config, 4)
@@ -123,17 +83,14 @@ refine_formal = "initial prompt"
 	// Give fsnotify watcher a moment to attach.
 	time.Sleep(50 * time.Millisecond)
 
-	// 1) Atomic rename save (as done by editors like vim/nano).
-	tmpPath := filepath.Join(dir, ".config.toml.tmp")
-	updated1 := `
-[live_transcribe]
-model = "gemini-3.5-transcribe-live"
-language = "en-US"
-vad_silence_ms = 900
+	// Unrelated files in the (shared) fcitx5 conf directory must not trigger reloads.
+	if err := os.WriteFile(filepath.Join(dir, "fcitx5", "conf", "other.conf"), []byte("x=1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
-[prompts]
-refine_formal = "atomic renamed prompt"
-`
+	// 1) Atomic rename save, the way Fcitx5's safeSaveAsIni and editors do it.
+	tmpPath := filepath.Join(filepath.Dir(cfgPath), ".gemini-voice.conf.tmp")
+	updated1 := "Language=en-US\n\n[LiveTranscription]\nVadSilenceMs=900\n\n[PostProcess/Actions/0]\nName=refine_formal\nPrompt=\"atomic renamed prompt\"\n"
 	if err := os.WriteFile(tmpPath, []byte(updated1), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -143,15 +100,15 @@ refine_formal = "atomic renamed prompt"
 
 	select {
 	case c := <-reloaded:
-		if c.Prompts["refine_formal"] != "atomic renamed prompt" || c.LiveTranscribe.Language != "en-US" {
+		if c.Prompts["refine_formal"] != "atomic renamed prompt" || c.LiveLanguage() != "en-US" || c.LiveTranscribe.VADSilenceMs != 900 {
 			t.Fatalf("unexpected reloaded config: %+v", c)
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for atomic rename hot-reload")
 	}
 
-	// 2) Broken TOML should preserve previous valid config.
-	if err := os.WriteFile(cfgPath, []byte("this is = [not valid toml"), 0o600); err != nil {
+	// 2) An invalid value must preserve the previous valid config.
+	if err := os.WriteFile(cfgPath, []byte("[LiveTranscription]\nMode=bogus\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(250 * time.Millisecond)
@@ -159,20 +116,17 @@ refine_formal = "atomic renamed prompt"
 		t.Fatalf("expected previous valid config preserved, got %q", got)
 	}
 
-	// 3) Direct in-place write restores valid update.
-	updated2 := `
-[prompts]
-refine_formal = "direct write prompt"
-`
+	// 3) Direct in-place write restores a valid update.
+	updated2 := "[PostProcess/Actions/0]\nName=refine_formal\nPrompt=direct\\ write\n"
 	if err := os.WriteFile(cfgPath, []byte(updated2), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	select {
 	case c := <-reloaded:
-		if c.Prompts["refine_formal"] != "direct write prompt" {
+		if c.Prompts["refine_formal"] != "direct\\ write" {
 			t.Fatalf("unexpected direct write config: %+v", c)
 		}
-		// Default prompts omitted from TOML should still exist.
+		// Built-in default prompts omitted from the conf still exist.
 		if c.Prompts["translate_en"] == "" {
 			t.Fatal("expected omitted default prompts to remain intact")
 		}
@@ -188,13 +142,8 @@ refine_formal = "direct write prompt"
 
 func TestConfigLoad_ModeAndVocabularyValidation(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "config.toml")
-	content := `
-[live_transcribe]
-language = "zh-CN"
-mode = "smart"
-custom_vocabulary = [" Fcitx5 ", "", "PipeWire", "Fcitx5"]
-`
+	cfgPath := filepath.Join(dir, "gemini-voice.conf")
+	content := "Language=zh-CN\n\n[LiveTranscription]\nMode=smart\n\n[LiveTranscription/CustomVocabulary]\n0=\" Fcitx5 \"\n1=\n2=PipeWire\n3=Fcitx5\n"
 	if err := os.WriteFile(cfgPath, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -203,11 +152,11 @@ custom_vocabulary = [" Fcitx5 ", "", "PipeWire", "Fcitx5"]
 	if err != nil {
 		t.Fatalf("LoadConfigFile: %v", err)
 	}
-	if cfg.LiveTranscribe.Language != "zh-CN" {
-		t.Fatalf("expected legacy language preserved, got %q", cfg.LiveTranscribe.Language)
+	if cfg.LiveLanguage() != "zh-CN" {
+		t.Fatalf("expected language preserved, got %q", cfg.LiveLanguage())
 	}
-	if got := NormalizeLanguageCodes(cfg.LiveTranscribe.Language); !reflect.DeepEqual(got, []string{"cmn-Hans-CN"}) {
-		t.Fatalf("NormalizeLanguageCodes(%q) = %#v", cfg.LiveTranscribe.Language, got)
+	if got := NormalizeLanguageCodes(cfg.LiveLanguage()); !reflect.DeepEqual(got, []string{"cmn-Hans-CN"}) {
+		t.Fatalf("NormalizeLanguageCodes(%q) = %#v", cfg.LiveLanguage(), got)
 	}
 	if cfg.LiveTranscribe.Mode != "SMART" {
 		t.Fatalf("mode = %q, want SMART", cfg.LiveTranscribe.Mode)
@@ -223,12 +172,20 @@ custom_vocabulary = [" Fcitx5 ", "", "PipeWire", "Fcitx5"]
 		t.Fatalf("Clone() shared CustomVocabulary backing slice")
 	}
 
-	badPath := filepath.Join(dir, "bad.toml")
-	if err := os.WriteFile(badPath, []byte("[live_transcribe]\nmode = \"bogus\"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := LoadConfigFile(badPath); err == nil {
-		t.Fatal("expected error for invalid live_transcribe.mode")
+	for name, bad := range map[string]string{
+		"mode":       "[LiveTranscription]\nMode=bogus\n",
+		"vad":        "[LiveTranscription]\nVadSilenceMs=-5\n",
+		"live model": "[LiveTranscription]\nModel=gemini-3.5-flash-lite/low\n",
+		"pp model":   "[PostProcess]\nModel=gemini-3.5-flash/turbo\n",
+		"action":     "[PostProcess/Actions/0]\nName=refine_formal\nModel=gemini-3.5-flash/turbo\n",
+	} {
+		badPath := filepath.Join(dir, "bad.conf")
+		if err := os.WriteFile(badPath, []byte(bad), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := LoadConfigFile(badPath); err == nil {
+			t.Fatalf("expected error for invalid %s", name)
+		}
 	}
 }
 
@@ -238,7 +195,7 @@ func TestTranslateTargetsAndPromptResolution(t *testing.T) {
 		t.Fatalf("default TranslateTargets = %#v", got)
 	}
 
-	cfg.PostProcess.TranslateLanguages = []string{"en", "Japanese", "zh-CN", "ja", "粤语"}
+	cfg.Ime.TranslateLanguages = []string{"en", "Japanese", "zh-CN", "ja", "粤语"}
 	targets := cfg.TranslateTargets()
 	want := []TranslateTarget{
 		{Action: "translate_en", Label: "English"},

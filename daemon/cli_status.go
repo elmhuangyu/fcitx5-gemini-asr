@@ -13,7 +13,7 @@ import (
 func cmdStatus(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
+	configPath := fs.String("config", defaultConfigPath(), "Path to gemini-voice.conf")
 	socketPath := fs.String("socket", defaultSocketPath(), "Path to Unix domain socket")
 	credPathFlag := fs.String("cred-path", "", "Path to encrypted .cred file")
 	if err := fs.Parse(args); err != nil {
@@ -23,13 +23,14 @@ func cmdStatus(args []string, deps cliDeps) int {
 		return 2
 	}
 
+	cliMigrate(*configPath, deps)
 	cfgExists := "missing (using built-in defaults)"
 	if info, err := os.Stat(*configPath); err == nil && !info.IsDir() {
 		cfgExists = fmt.Sprintf("present (%04o)", info.Mode().Perm())
 	}
 	_, _ = fmt.Fprintf(deps.stdout, "Config file:      %s [%s]\n", *configPath, cfgExists)
 
-	printAuthDiagnostics(*configPath, *credPathFlag, deps)
+	printAuthDiagnostics(*credPathFlag, deps)
 
 	if p, err := deps.lookPath("pw-record"); err == nil {
 		_, _ = fmt.Fprintf(deps.stdout, "PipeWire capture: %s\n", p)
@@ -59,13 +60,8 @@ func cmdStatus(args []string, deps cliDeps) int {
 	return 0
 }
 
-func printAuthDiagnostics(configPath, credPathOverride string, deps cliDeps) {
-	cfg, cfgErr := loadConfigOrDefault(configPath)
-	credName, credPath, err := resolveCredNameAndPath(configPath, "", credPathOverride)
-	if err != nil {
-		_, _ = fmt.Fprintf(deps.stdout, "Credential:       error (%v)\n", err)
-		return
-	}
+func printAuthDiagnostics(credPathOverride string, deps cliDeps) {
+	credName, credPath := resolveCredPath(credPathOverride)
 
 	credStatus := "missing"
 	if info, statErr := os.Stat(credPath); statErr == nil {
@@ -80,9 +76,6 @@ func printAuthDiagnostics(configPath, credPathOverride string, deps cliDeps) {
 	}
 
 	fallbackEnv := DefaultFallbackEnv
-	if cfgErr == nil && strings.TrimSpace(cfg.Connection.FallbackEnv) != "" {
-		fallbackEnv = cfg.Connection.FallbackEnv
-	}
 	envState := "unset"
 	if strings.TrimSpace(deps.getenv(fallbackEnv)) != "" {
 		envState = "set"

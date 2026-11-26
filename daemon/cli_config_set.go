@@ -6,15 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 )
 
 func cmdConfigSet(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("config set", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
-	fcitxPath := fs.String("fcitx-config", DefaultFcitxConfigPath(), "Path to Fcitx5 gemini-voice.conf")
+	configPath := fs.String("config", defaultConfigPath(), "Path to gemini-voice.conf")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return 0
@@ -22,99 +20,36 @@ func cmdConfigSet(args []string, deps cliDeps) int {
 		return 2
 	}
 	if fs.NArg() != 2 {
-		_, _ = fmt.Fprintln(deps.stderr, "usage: gemini-voice config set [-config PATH] [-fcitx-config PATH] <key> <value>")
+		_, _ = fmt.Fprintln(deps.stderr, "usage: gemini-voice config set [-config PATH] <key> <value>")
 		return 2
 	}
 
+	cliMigrate(*configPath, deps)
 	cfg, err := loadConfigOrDefault(*configPath)
 	if err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "error: load config %q: %v\n", *configPath, err)
 		return 1
 	}
-	fcitxCfg, err := LoadFcitxAddonConfig(*fcitxPath)
-	if err != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
-		return 1
-	}
 
 	key := strings.TrimSpace(fs.Arg(0))
-	val := fs.Arg(1)
-	daemonDirty, fcitxDirty, err := setConfigKey(&cfg, &fcitxCfg, key, val)
+	imeDirty, err := setConfigKey(&cfg, key, fs.Arg(1))
 	if err != nil {
 		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
 		return 1
 	}
-
-	migratedFcitx, migErr := MigrateOrphanedFcitxTranslateLanguages(*fcitxPath, translateMigrationMarkerPath(*configPath))
-	if migErr != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "warning: migrate fcitx translate_languages: %v\n", migErr)
-	}
-	if fcitxDirty && migratedFcitx && key != "ime.translate_languages" {
-		fcitxCfg.TranslateLanguages = nil
-	}
-
-	// Render both configs before writing either file: with validation and
-	// encoding done up front, only an I/O failure can leave the two files out
-	// of sync, and writeConfigUpdates reports that split state clearly.
-	var daemonData, fcitxData []byte
-	if daemonDirty {
-		if daemonData, err = renderConfigTOML(cfg); err != nil {
-			_, _ = fmt.Fprintf(deps.stderr, "error: encode daemon config %q: %v\n", *configPath, err)
-			return 1
-		}
-	}
-	if fcitxDirty {
-		existing, readErr := os.ReadFile(*fcitxPath)
-		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-			_, _ = fmt.Fprintf(deps.stderr, "error: read existing fcitx config %q: %v\n", *fcitxPath, readErr)
-			return 1
-		}
-		fcitxData = mergeFcitxAddonConfig(existing, fcitxCfg)
-	}
-	if err := writeConfigUpdates(*fcitxPath, fcitxData, *configPath, daemonData); err != nil {
-		_, _ = fmt.Fprintf(deps.stderr, "error: %v\n", err)
+	if err := SaveConfigFile(*configPath, cfg); err != nil {
+		_, _ = fmt.Fprintf(deps.stderr, "error: save %q: %v\n", *configPath, err)
 		return 1
 	}
 
-	if daemonDirty {
+	// The daemon watches the conf and applies daemon-side keys by itself;
+	// only keys the Fcitx5 addon consumes need a Fcitx5 reload.
+	if imeDirty && ReloadFcitx5Config(context.Background(), deps) {
+		_, _ = fmt.Fprintf(deps.stdout, "Updated %s in %s (reloaded Fcitx5)\n", key, *configPath)
+	} else {
 		_, _ = fmt.Fprintf(deps.stdout, "Updated %s in %s\n", key, *configPath)
 	}
-	if fcitxDirty {
-		reloaded := ReloadFcitx5Config(context.Background(), deps)
-		if reloaded {
-			_, _ = fmt.Fprintf(deps.stdout, "Updated %s in %s (reloaded Fcitx5)\n", key, *fcitxPath)
-		} else {
-			_, _ = fmt.Fprintf(deps.stdout, "Updated %s in %s\n", key, *fcitxPath)
-		}
-	} else if migratedFcitx {
-		ReloadFcitx5Config(context.Background(), deps)
-	}
 	return 0
-}
-
-// writeConfigUpdates persists pre-rendered config contents, writing the
-// Fcitx5 addon config first and the daemon config second. A nil data slice
-// means that file does not need updating. Saving the Fcitx5 config first puts
-// the riskier write (its directory is owned by Fcitx5 tooling, while the
-// daemon config directory is created by this CLI) before anything has been
-// modified, so its failure leaves both files untouched. If the daemon write
-// still fails after the Fcitx5 write succeeded, the returned error spells out
-// the split state and how to reconcile it.
-func writeConfigUpdates(fcitxPath string, fcitxData []byte, configPath string, daemonData []byte) error {
-	if fcitxData != nil {
-		if err := writeConfigFileAtomic(fcitxPath, fcitxData, "fcitx config"); err != nil {
-			return fmt.Errorf("save %q: %w", fcitxPath, err)
-		}
-	}
-	if daemonData != nil {
-		if err := writeConfigFileAtomic(configPath, daemonData, "config"); err != nil {
-			if fcitxData != nil {
-				return fmt.Errorf("updated %q but failed to save daemon config %q: %v; the two config files are now out of sync, re-run the same command to reconcile them", fcitxPath, configPath, err)
-			}
-			return fmt.Errorf("save %q: %w", configPath, err)
-		}
-	}
-	return nil
 }
 
 func parseActionKey(k string, prefixes ...string) (string, bool) {

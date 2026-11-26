@@ -196,7 +196,7 @@ Subcommands:
 func cmdServe(args []string, deps cliDeps) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(deps.stderr)
-	configPath := fs.String("config", defaultConfigPath(), "Path to daemon config.toml")
+	configPath := fs.String("config", defaultConfigPath(), "Path to gemini-voice.conf (Fcitx5 addon config)")
 	socketPath := fs.String("socket", defaultSocketPath(), "Path to Unix domain socket")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {

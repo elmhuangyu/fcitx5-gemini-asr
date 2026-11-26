@@ -34,7 +34,7 @@ func TestMaskSecret(t *testing.T) {
 
 func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	cfgPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
 	credPath := filepath.Join(dir, "gemini-voice", "gemini_api_key.cred")
 	rawSecret := "AIzaSyTestSecretKey12345"
 
@@ -64,7 +64,7 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 		serveFn:  func(string, string) int { return 0 },
 	}
 
-	code := runCLI("gemini-voice", []string{"auth", "set", "--config", cfgPath, "--stdin"}, deps)
+	code := runCLI("gemini-voice", []string{"auth", "set", "--output", credPath, "--stdin"}, deps)
 	if code != 0 {
 		t.Fatalf("auth set exit=%d stderr=%s", code, stderr.String())
 	}
@@ -118,14 +118,17 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfgTOML := "[connection]\napi_base_url = \"" + srv.URL + "\"\n"
-	if err := os.WriteFile(cfgPath, []byte(cfgTOML), 0o600); err != nil {
+	cfgConf := "[Connection]\nApiBaseUrl=" + srv.URL + "\n"
+	if err := os.MkdirAll(filepath.Dir(cfgPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, []byte(cfgConf), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	stdout.Reset()
 	stderr.Reset()
-	code = runCLI("gemini-voice", []string{"verify-key", "--config", cfgPath}, deps)
+	code = runCLI("gemini-voice", []string{"verify-key", "--config", cfgPath, "--path", credPath}, deps)
 	if code != 0 {
 		t.Fatalf("verify-key exit=%d stderr=%s", code, stderr.String())
 	}
@@ -146,7 +149,7 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 	apiHits = 0
 	stdout.Reset()
 	stderr.Reset()
-	code = runCLI("gemini-voice", []string{"auth", "verify", "--offline", "--config", cfgPath}, deps)
+	code = runCLI("gemini-voice", []string{"auth", "verify", "--offline", "--path", credPath}, deps)
 	if code != 0 {
 		t.Fatalf("auth verify --offline exit=%d stderr=%s", code, stderr.String())
 	}
@@ -161,7 +164,7 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 	apiStatus = http.StatusUnauthorized
 	stdout.Reset()
 	stderr.Reset()
-	code = runCLI("gemini-voice", []string{"auth", "verify", "--config", cfgPath}, deps)
+	code = runCLI("gemini-voice", []string{"auth", "verify", "--config", cfgPath, "--path", credPath}, deps)
 	if code != 1 {
 		t.Fatalf("expected verify failure on 401, got exit=%d", code)
 	}
@@ -195,7 +198,7 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 		}
 		stdout.Reset()
 		stderr.Reset()
-		code = runCLI("gemini-voice", []string{"auth", "verify", "--config", cfgPath}, failDeps)
+		code = runCLI("gemini-voice", []string{"auth", "verify", "--config", cfgPath, "--path", credPath}, failDeps)
 		if code != 1 {
 			t.Fatalf("%s: expected verify failure on decrypt error, got exit=%d", tc.name, code)
 		}
@@ -212,7 +215,7 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 	}
 	cmds = nil
 	stdout.Reset()
-	code = runCLI("gemini-voice", []string{"set-key", "--config", cfgPath, "--key-file", keyFile, "--with-key", "auto"}, deps)
+	code = runCLI("gemini-voice", []string{"set-key", "--output", credPath, "--key-file", keyFile, "--with-key", "auto"}, deps)
 	if code != 0 {
 		t.Fatalf("set-key --key-file exit=%d stderr=%s", code, stderr.String())
 	}
@@ -222,7 +225,7 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 
 	// Remove command
 	stdout.Reset()
-	code = runCLI("gemini-voice", []string{"auth", "remove", "--config", cfgPath}, deps)
+	code = runCLI("gemini-voice", []string{"auth", "remove", "--path", credPath}, deps)
 	if code != 0 {
 		t.Fatalf("auth remove exit=%d stderr=%s", code, stderr.String())
 	}
@@ -234,7 +237,7 @@ func TestCLI_AuthSetVerifyRemove_StdinAndKeyFile(t *testing.T) {
 func TestCLI_AuthSetErrorsAndTempCleanup(t *testing.T) {
 	dir := t.TempDir()
 	cfgDir := filepath.Join(dir, "gemini-voice")
-	cfgPath := filepath.Join(cfgDir, "config.toml")
+	credPath := filepath.Join(cfgDir, "gemini_api_key.cred")
 
 	// Empty key rejected
 	var stdout, stderr bytes.Buffer
@@ -248,7 +251,7 @@ func TestCLI_AuthSetErrorsAndTempCleanup(t *testing.T) {
 		getenv:   func(string) string { return "" },
 		serveFn:  func(string, string) int { return 0 },
 	}
-	if code := runCLI("gemini-voice", []string{"auth", "set", "--config", cfgPath, "--stdin"}, deps); code == 0 {
+	if code := runCLI("gemini-voice", []string{"auth", "set", "--output", credPath, "--stdin"}, deps); code == 0 {
 		t.Fatal("expected failure for empty API key")
 	}
 
@@ -259,7 +262,7 @@ func TestCLI_AuthSetErrorsAndTempCleanup(t *testing.T) {
 	deps.runCmd = func(context.Context, string, string, ...string) cmdResult {
 		return cmdResult{stderr: "systemd-creds error", err: errors.New("exit status 1")}
 	}
-	if code := runCLI("gemini-voice", []string{"auth", "set", "--config", cfgPath, "--stdin"}, deps); code == 0 {
+	if code := runCLI("gemini-voice", []string{"auth", "set", "--output", credPath, "--stdin"}, deps); code == 0 {
 		t.Fatal("expected failure when systemd-creds fails")
 	}
 	if !strings.Contains(stderr.String(), "systemd-creds error") {
@@ -276,7 +279,8 @@ func TestCLI_AuthSetErrorsAndTempCleanup(t *testing.T) {
 
 func TestCLI_InitStatusAndDaemonDispatch(t *testing.T) {
 	dir := t.TempDir()
-	cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
+	cfgPath := filepath.Join(dir, "fcitx5", "conf", "gemini-voice.conf")
+	credPath := filepath.Join(dir, "gemini-voice", "gemini_api_key.cred")
 	sockPath := filepath.Join(dir, "gemini.sock")
 
 	var stdout, stderr bytes.Buffer
@@ -306,33 +310,36 @@ func TestCLI_InitStatusAndDaemonDispatch(t *testing.T) {
 		serveFn:  func(string, string) int { return 0 },
 	}
 
-	if code := runCLI("gemini-voice", []string{"init", "--config", cfgPath, "--stdin"}, deps); code != 0 {
+	if code := runCLI("gemini-voice", []string{"init", "--config", cfgPath, "--cred-path", credPath, "--stdin"}, deps); code != 0 {
 		t.Fatalf("init exit=%d stderr=%s", code, stderr.String())
 	}
 	data, err := os.ReadFile(cfgPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != DefaultConfigTOML() {
-		t.Fatal("init wrote unexpected config.toml content")
+	if string(data) != string(mergeConfig(nil, DefaultConfig())) {
+		t.Fatalf("init wrote unexpected gemini-voice.conf content:\n%s", data)
+	}
+	if _, err := os.Stat(credPath); err != nil {
+		t.Fatalf("init did not write the credential: %v", err)
 	}
 
-	// Second init without --force must preserve custom config.toml
+	// Second init without --force must preserve custom gemini-voice.conf
 	if err := os.WriteFile(cfgPath, []byte("# custom\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	deps.stdin = strings.NewReader("AIzaSyInitSecretKey8888\n")
-	if code := runCLI("gemini-voice", []string{"init", "--config", cfgPath, "--stdin"}, deps); code != 0 {
+	if code := runCLI("gemini-voice", []string{"init", "--config", cfgPath, "--cred-path", credPath, "--stdin"}, deps); code != 0 {
 		t.Fatalf("second init exit=%d stderr=%s", code, stderr.String())
 	}
 	data2, err := os.ReadFile(cfgPath)
 	if err != nil || string(data2) != "# custom\n" {
-		t.Fatalf("existing config.toml was overwritten: %v %q", err, string(data2))
+		t.Fatalf("existing gemini-voice.conf was overwritten: %v %q", err, string(data2))
 	}
 
 	// Status check
 	stdout.Reset()
-	if code := runCLI("gemini-voice", []string{"status", "--config", cfgPath, "--socket", sockPath}, deps); code != 0 {
+	if code := runCLI("gemini-voice", []string{"status", "--config", cfgPath, "--cred-path", credPath, "--socket", sockPath}, deps); code != 0 {
 		t.Fatalf("status exit=%d stderr=%s", code, stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "systemd-creds:    /usr/bin/systemd-creds") {
@@ -412,13 +419,13 @@ func TestCLI_AuthSetRejectsOversizedInput(t *testing.T) {
 				if err := os.WriteFile(keyFile, bytes.Repeat([]byte("k"), maxCredentialBytes+1), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				return []string{"auth", "set", "--config", cfgPath, "--key-file", keyFile}, nil
+				return []string{"auth", "set", "--output", cfgPath, "--key-file", keyFile}, nil
 			},
 		},
 		{
 			name: "oversized_stdin",
 			makeArgs: func(_ *testing.T, _, cfgPath string) ([]string, []byte) {
-				return []string{"auth", "set", "--config", cfgPath, "--stdin"}, bytes.Repeat([]byte("s"), maxCredentialBytes+1)
+				return []string{"auth", "set", "--output", cfgPath, "--stdin"}, bytes.Repeat([]byte("s"), maxCredentialBytes+1)
 			},
 		},
 	}
@@ -426,8 +433,8 @@ func TestCLI_AuthSetRejectsOversizedInput(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			cfgPath := filepath.Join(dir, "gemini-voice", "config.toml")
-			args, stdinData := tc.makeArgs(t, dir, cfgPath)
+			credPath := filepath.Join(dir, "gemini-voice", "gemini_api_key.cred")
+			args, stdinData := tc.makeArgs(t, dir, credPath)
 
 			cmdCalled := false
 			var stdout, stderr bytes.Buffer
