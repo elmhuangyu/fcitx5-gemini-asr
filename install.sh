@@ -97,11 +97,13 @@ mkdir -p "$HOME/.local/bin" "$HOME/.config/gemini-voice" "$HOME/.config/systemd/
 install -m 0755 "${ROOT_DIR}/daemon/gemini-voice-daemon" "$HOME/.local/bin/gemini-voice-daemon"
 ln -sfn gemini-voice-daemon "$HOME/.local/bin/gemini-voice"
 
-if [[ ! -f "$HOME/.config/gemini-voice/config.toml" ]]; then
-    install -m 0600 "${ROOT_DIR}/systemd/config.toml" "$HOME/.config/gemini-voice/config.toml"
-    echo "Installed default config to $HOME/.config/gemini-voice/config.toml"
-else
-    echo "Keeping existing config at $HOME/.config/gemini-voice/config.toml"
+# All non-secret settings live in the Fcitx5 addon config
+# (~/.config/fcitx5/conf/gemini-voice.conf, editable in fcitx5-configtool).
+# An old ~/.config/gemini-voice/config.toml is imported once by the daemon / CLI
+# on first run and renamed to config.toml.migrated.
+if [[ -f "$HOME/.config/gemini-voice/config.toml" ]]; then
+    echo "Found legacy $HOME/.config/gemini-voice/config.toml; it will be migrated into"
+    echo "$HOME/.config/fcitx5/conf/gemini-voice.conf the next time the daemon or CLI runs."
 fi
 
 install -m 0644 "${ROOT_DIR}/systemd/gemini-voice.service" "$HOME/.config/systemd/user/gemini-voice.service"
