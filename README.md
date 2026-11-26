@@ -93,7 +93,7 @@ gemini-voice config set live.language auto          # auto (85+ languages), or c
 gemini-voice config set live.mode VERBATIM          # VERBATIM (literal) or SMART (disfluency cleanup)
 gemini-voice config set live.custom_vocabulary Fcitx5,PipeWire,Gemini
 gemini-voice config set live.vad_silence_ms 1200       # Server-side VAD trailing-silence timeout in ms before auto-stop (0 disables auto-stop)
-gemini-voice config set post_process.prefetch refine_fix_typos,refine_formal
+gemini-voice config set post_process.prefetch refine_fix_typos,refine_formal   # switches the per-action Prefetch flags
 gemini-voice config set connection.proxy socks5://127.0.0.1:1080
 
 # Inspect current model routing and optionally query available models from Gemini API:
@@ -102,7 +102,8 @@ gemini-voice models --remote
 
 # Choose models for live ASR, default post-processing, and individual actions:
 gemini-voice models --live gemini-3.5-transcribe-live --default gemini-3.5-flash-lite --refine-formal gemini-4-hydrogen --as-prompt gemini-4-hydrogen
-gemini-voice models --translate ja=gemini-3.5-flash/low --translate en=default  # Override or clear dynamic translate_<lang> targets (repeatable)
+gemini-voice models --translate-all gemini-3.5-flash  # Model of the Translate group (every translate_<lang>)
+gemini-voice models --translate ja=gemini-3.5-flash/low --translate en=default  # Override or clear one translate_<lang> (Actions list; repeatable)
 gemini-voice config set model.refine_fix_typos gemini-3.5-flash-lite
 gemini-voice config set model.refine_formal gemini-3.5-flash/low   # Thinking effort via model suffix
 gemini-voice config set model.refine_formal default   # Clear override and inherit post_process.model
@@ -163,7 +164,7 @@ While recording is active, the IME captures **all** keystrokes; they are not for
 
 ## Configuration (`~/.config/fcitx5/conf/gemini-voice.conf`)
 
-Every non-secret setting lives in the Fcitx5 addon config file and is shown in **fcitx5-configtool** (Addons / Modules, Gemini Voice) in tidy groups: the top-level options plus **Live Transcription**, **Post-processing** and **Connection**. The daemon applies edits automatically (no restart); Fcitx5 itself reloads the keys it consumes. Defaults are omitted from the file (Fcitx5 writes them as `# Key=value` comments), the built-in prompts live in the daemon and only show up in the file once you override them.
+Every non-secret setting lives in the Fcitx5 addon config file and is shown in **fcitx5-configtool** (Addons / Modules, Gemini Voice) in tidy groups: the top-level options plus **Live Transcription**, **Post-processing** (default model, one sub-group per action with its model, prompt and prefetch switch, and an advanced per-action override list) and **Connection**. The daemon applies edits automatically (no restart); Fcitx5 itself reloads the keys it consumes. Defaults are omitted from the file (Fcitx5 writes them as `# Key=value` comments), the built-in prompts live in the daemon and only show up in the file once you override them.
 
 ```ini
 # Consumed by the Fcitx5 addon
@@ -191,19 +192,23 @@ VadSilenceMs=1500
 [PostProcess]
 Model=gemini-3.5-flash/low
 
-[PostProcess/Prefetch]
-0=refine_fix_typos
-1=refine_formal
-
-# Optional per-action overrides; empty Prompt = built-in prompt, empty Model = Model above
-[PostProcess/Actions/0]
-Name=refine_casual
-Prompt="Make it sound like a text message."
+# One fixed group per built-in action: RefineFixTypos, RefineCasual,
+# RefineFormal, AsPrompt, Translate (every translate_<lang>), AskAi.
+# Empty Model = Model above, empty Prompt = built-in prompt.
+[PostProcess/RefineFormal]
 Model=gemini-4-hydrogen/high
+Prompt="Make it sound like a business email."
 
-[PostProcess/Actions/1]
-Name=translate_ja
+[PostProcess/RefineCasual]
+Prefetch=True
+
+[PostProcess/Translate]
 Model=gemini-3.5-flash
+
+# Advanced: override a single action that has no group of its own
+[PostProcess/Actions/0]
+Name=translate_ja
+Model=gemini-3.5-flash/low
 
 [Connection]
 Proxy=socks5://127.0.0.1:1080
@@ -216,9 +221,18 @@ Proxy=socks5://127.0.0.1:1080
 | `TranslateLanguages` | Translation targets for the menu (default: English). An action `translate_<lang>` exists for each. |
 | `LiveTranscription/Model`, `Mode`, `VadSilenceMs` | Live model, `VERBATIM` or `SMART`, trailing-silence auto-stop in ms (`0` disables). `CustomVocabulary` biases recognition. |
 | `PostProcess/Model` | Default post-processing model (optional `/low`, `/medium`, `/high` thinking-effort suffix). |
-| `PostProcess/Prefetch` | Actions prefetched when recording stops. An explicit empty `Prefetch=` disables prefetching. |
-| `PostProcess/Actions/N` | `Name` plus optional `Prompt` and `Model` overrides; names that are not built-in (e.g. `translate_ja`) are allowed. |
+| `PostProcess/<Action>/Model`, `Prompt` | Per-action groups (`RefineFixTypos`, `RefineCasual`, `RefineFormal`, `AsPrompt`, `Translate`, `AskAi`; configtool shows them as sub-groups of Post-processing). `Model` accepts the optional `/low`, `/medium`, `/high` suffix; empty inherits `PostProcess/Model`. `Prompt` empty uses the built-in prompt, which configtool shows as a tooltip. `Translate` applies to every `translate_<lang>`. |
+| `PostProcess/<Action>/Prefetch` | Run the action when recording stops so its result is ready when you pick it (default `True` for `RefineFixTypos` and `RefineFormal`, `False` otherwise). `Translate` prefetches every configured target language. |
+| `PostProcess/Actions/N` | Advanced override list for one specific action: `Name` (dropdown in configtool) plus optional `Prompt` and `Model`. Use it for a single language (e.g. `translate_ja`); precedence is Actions entry > action group > built-in default / `PostProcess/Model`. |
+
+The `Name` dropdown lists the built-in actions and the known translation languages. A name that is not in the list (for example `translate_pig_latin`, the action of a custom `TranslateLanguages` entry such as `Pig Latin`) is still honoured and kept untouched by Fcitx5 and the daemon, since the value is stored as plain text. Add such an entry with `gemini-voice config set model.translate_pig_latin <model>` or by hand; how configtool displays a name outside the dropdown has not been verified, so edit those entries from the CLI or a text editor.
+
+CLI keys follow the same split: `model.<builtin>` / `prompt.<builtin>` (e.g. `model.refine_formal`), `model.translate` / `prompt.translate` and `models --translate-all` set the group; `model.translate_<lang>`, `prompt.translate_<lang>`, `models --translate ja=...` and `--translate-en` write the `Actions` list. `post_process.prefetch a,b,c` switches the `Prefetch` flag of exactly those actions on (any `translate_*` name enables `Translate`), `none` turns all off.
 | `Connection/Proxy` | `http://`, `https://`, `socks5://` proxy for all Gemini traffic. |
+
+### Migrating the prefetch list
+
+Earlier versions of the conf had a hand-typed list `[PostProcess/Prefetch]` (`0=refine_fix_typos`, ... or an empty `Prefetch=` for none). On first start (daemon or any `gemini-voice` command) it is converted once into the per-action `Prefetch` switches and the list is removed; comments and all other keys are left alone. Existing `[PostProcess/Actions/N]` entries keep working unchanged (an entry for a built-in action still wins over that action's group). Entries of the old list that name no built-in action or `translate_*` are dropped.
 
 ### Migrating from `config.toml`
 
