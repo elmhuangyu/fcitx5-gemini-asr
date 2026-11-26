@@ -7,14 +7,14 @@ import (
 
 // Thinking effort levels accepted as a "/<effort>" suffix on post-processing
 // model strings, e.g. "gemini-3.5-flash/low".
-var thinkingEfforts = []string{"minimal", "low", "medium", "high"}
+var thinkingEfforts = []string{"low", "medium", "high"}
 
 // defaultEffortForAction returns the thinking effort applied when the model
 // string carries no suffix. Simple text transforms think as little as
 // possible; ask_ai and as_prompt keep the provider default ("").
 func defaultEffortForAction(action string) string {
 	if strings.HasPrefix(action, "refine_") || strings.HasPrefix(action, "translate_") {
-		return "minimal"
+		return "low"
 	}
 	return ""
 }
@@ -70,7 +70,7 @@ func ValidateLiveModel(model string) error {
 }
 
 // DescribeModelSpec returns the bare model name and a human-readable effort
-// description (e.g. "minimal (default)", "low", "provider default").
+// description (e.g. "low (default)", "low", "provider default").
 func DescribeModelSpec(spec, action string) (name, effort string) {
 	ms, err := ParseModelSpec(spec)
 	if err != nil {
@@ -115,17 +115,13 @@ type thinkingConfig struct {
 // buildThinkingConfig maps an effort to thinkingLevel. Returns nil when
 // effort is empty or the model has no thinking control.
 //
-// Pro models and 3.8-flash lack "minimal", and 3-pro lacks "medium"; those
-// are clamped to the nearest supported level.
+// 3-pro lacks "medium"; it is clamped to the nearest supported level.
 func buildThinkingConfig(name, effort string) *thinkingConfig {
 	if effort == "" || !supportsThinkingLevel(name) {
 		return nil
 	}
 	n := strings.ToLower(strings.TrimPrefix(name, "models/"))
 	level := effort
-	if effort == "minimal" && (strings.Contains(n, "-pro") || strings.HasPrefix(n, "gemini-3.8-flash")) {
-		level = "low"
-	}
 	if effort == "medium" && strings.HasPrefix(n, "gemini-3-pro") {
 		level = "high"
 	}

@@ -120,14 +120,14 @@ mode = "VERBATIM"        # "VERBATIM" (literal) or "SMART" (disfluency cleanup &
 vad_silence_ms = 1200 # server-side VAD trailing silence before auto-stop (0 disables)
 
 [post_process]
-model = "gemini-3.5-flash-lite" # optional thinking effort suffix: "/minimal", "/low", "/medium" or "/high" (e.g. "gemini-3.5-flash/low")
+model = "gemini-3.5-flash-lite" # optional thinking effort suffix: "/low", "/medium" or "/high" (e.g. "gemini-3.5-flash/low")
 prefetch = ["refine_fix_typos", "refine_formal"]
 translate_languages = ["en"]
 
 [post_process.models]
 # Optional per-action model overrides (empty inherits post_process.model).
-# A "/minimal|low|medium|high" suffix sets thinking effort (gemini-3 and newer: thinkingLevel).
-# Without a suffix refine_*/translate_* use "minimal"; ask_ai and as_prompt use the provider default.
+# A "/low|medium|high" suffix sets thinking effort (gemini-3 and newer: thinkingLevel).
+# Without a suffix refine_*/translate_* use "low"; ask_ai and as_prompt use the provider default.
 # Not valid for live_transcribe.model.
 # refine_fix_typos = "gemini-3.5-flash-lite"
 # refine_casual = "gemini-3.5-flash"

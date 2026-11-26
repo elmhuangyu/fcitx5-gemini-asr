@@ -213,7 +213,7 @@ func buildSetupForm(state *setupFormState, opts setupFormOptions) *huh.Form {
 	groups = append(groups,
 		huh.NewGroup(overrideFields...).
 			Title("3. Per-Action Model Overrides").
-			Description("Leave blank or enter \"default\" to inherit the default post-processing model. Optional thinking effort suffix: model/minimal|low|medium|high.").
+			Description("Leave blank or enter \"default\" to inherit the default post-processing model. Optional thinking effort suffix: model/low|medium|high.").
 			WithHideFunc(func() bool { return !state.configureOverrides }),
 	)
 

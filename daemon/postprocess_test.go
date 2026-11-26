@@ -277,7 +277,7 @@ func TestPostProcessor_ThinkingEffort(t *testing.T) {
 		}
 	}
 	tc := func(i int) *thinkingConfig { return bodies[i].GenerationConfig.ThinkingConfig }
-	if tc(0) == nil || tc(0).ThinkingLevel != "minimal" {
+	if tc(0) == nil || tc(0).ThinkingLevel != "low" {
 		t.Fatalf("refine_fix_typos default: %+v", tc(0))
 	}
 	if tc(1) == nil || tc(1).ThinkingLevel != "high" {
@@ -286,7 +286,7 @@ func TestPostProcessor_ThinkingEffort(t *testing.T) {
 	if paths[1] != "/v1beta/models/gemini-3-pro-preview:generateContent" {
 		t.Fatalf("suffix leaked into URL: %q", paths[1])
 	}
-	if tc(2) == nil || tc(2).ThinkingLevel != "minimal" {
+	if tc(2) == nil || tc(2).ThinkingLevel != "low" {
 		t.Fatalf("3.5-flash-lite translate default: %+v", tc(2))
 	}
 	if tc(3) == nil || tc(3).ThinkingLevel != "medium" || paths[3] != "/v1beta/models/gemini-3.5-flash:generateContent" {
@@ -310,10 +310,13 @@ func TestParseModelSpecAndMapping(t *testing.T) {
 	if err := ValidateLiveModel("gemini-3.5-transcribe-live/low"); err == nil {
 		t.Fatal("live model suffix must be rejected")
 	}
-	if c := buildThinkingConfig("gemini-3-pro-preview", "minimal"); c.ThinkingLevel != "low" {
-		t.Fatalf("pro minimal -> %+v", c)
+	if c := buildThinkingConfig("gemini-3-pro-preview", "medium"); c.ThinkingLevel != "high" {
+		t.Fatalf("3-pro medium -> %+v", c)
 	}
-	if buildThinkingConfig("gemini-2.5-pro", "minimal") != nil {
+	if _, err := ParseModelSpec("gemini-3.5-flash/minimal"); err == nil {
+		t.Fatal("minimal must be rejected")
+	}
+	if buildThinkingConfig("gemini-2.5-pro", "low") != nil {
 		t.Fatal("gemini-2.5 must have no thinking config")
 	}
 	if c := buildThinkingConfig("gemini-4-hydrogen", "high"); c == nil || c.ThinkingLevel != "high" {

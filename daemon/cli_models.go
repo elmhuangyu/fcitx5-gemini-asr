@@ -26,7 +26,7 @@ func cmdModels(args []string, deps cliDeps) int {
 	configPath := fs.String("config", defaultConfigPath(), "Path to config.toml")
 	remote := fs.Bool("remote", false, "Query Gemini API /v1beta/models using configured credentials")
 	liveModel := fs.String("live", "", "Set live transcription model")
-	defaultModel := fs.String("default", "", "Set default post-processing model; optional thinking effort suffix /minimal|low|medium|high, e.g. gemini-3.5-flash/low")
+	defaultModel := fs.String("default", "", "Set default post-processing model; optional thinking effort suffix /low|medium|high, e.g. gemini-3.5-flash/low")
 	fixTypos := fs.String("refine-fix-typos", "", "Set model override for refine_fix_typos (\"default\" clears)")
 	casual := fs.String("refine-casual", "", "Set model override for refine_casual (\"default\" clears)")
 	formal := fs.String("refine-formal", "", "Set model override for refine_formal (\"default\" clears)")
